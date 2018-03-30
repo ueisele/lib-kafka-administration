@@ -7,8 +7,10 @@ import org.apache.kafka.common.requests.ControlledShutdownResponse;
 
 public class ControlledShutdownRequestDefinition extends RequestDefinition<ControlledShutdownResponse, ControlledShutdownRequestDefinition> {
 
+    public static final short DEFAULT_DESIRED_VERSION = ApiKeys.CONTROLLED_SHUTDOWN.latestVersion();
+
     private final int shutdownBrokerId;
-    private short desiredVersion = ApiKeys.CONTROLLED_SHUTDOWN.latestVersion();
+    private short desiredVersion = DEFAULT_DESIRED_VERSION;
 
     public ControlledShutdownRequestDefinition(int shutdownBrokerId) {
         super(ApiKeys.CONTROLLED_SHUTDOWN.name, ControlledShutdownResponse.class);
