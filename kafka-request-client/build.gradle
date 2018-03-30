@@ -1,0 +1,9 @@
+apply plugin: 'scala'
+
+dependencies {
+    compile libs.kafkaclients
+    compile libs.scala
+
+    testCompile libs.junit
+    testCompile libs.scalaTest
+}

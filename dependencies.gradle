@@ -1,0 +1,22 @@
+ext {
+    gradleVersion = "4.6"
+
+    versions = [:]
+    libs = [:]
+}
+
+versions += [
+        junit: "4.12",
+        kafka: "1.1.0",
+        scala: "2.12.5",
+        scalaTest: "3.0.5"
+]
+
+versions["baseScala"] = versions.scala.substring(0, versions.scala.lastIndexOf("."))
+
+libs += [
+        junit: "junit:junit:$versions.junit",
+        kafkaclients: "org.apache.kafka:kafka-clients:$versions.kafka",
+        scala: "org.scala-lang:scala-library:$versions.scala",
+        scalaTest: "org.scalatest:scalatest_$versions.baseScala:$versions.scalaTest"
+]

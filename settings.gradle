@@ -1,0 +1,3 @@
+rootProject.name = 'kafka-administration'
+include 'kafka-request-client'
+

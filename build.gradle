@@ -1,0 +1,42 @@
+apply from: file('dependencies.gradle')
+apply from: file('wrapper.gradle')
+
+allprojects {
+    apply plugin: 'idea'
+
+    group 'de.db.infra.kafka'
+    version '1.0-SNAPSHOT'
+
+    repositories {
+        mavenCentral()
+    }
+}
+
+subprojects {
+    apply plugin: 'java'
+
+    sourceCompatibility = 1.8
+
+    compileJava {
+        sourceCompatibility = 1.8
+        targetCompatibility = 1.8
+        options.encoding = 'UTF-8'
+    }
+
+    compileTestJava {
+        sourceCompatibility = 1.8
+        targetCompatibility = 1.8
+        options.encoding = 'UTF-8'
+    }
+
+    task copyDependantLibs(type: Copy) {
+        from (configurations.runtime)
+        into "$buildDir/dependant-libs"
+        duplicatesStrategy 'exclude'
+    }
+
+    jar {
+        dependsOn('copyDependantLibs')
+    }
+
+}
