@@ -41,19 +41,20 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
+import static java.util.Collections.emptySet;
 import static org.apache.kafka.common.utils.Utils.closeQuietly;
 
 public class RequestClient implements AutoCloseable {
 
     /**
-     * The next integer to use to name a KafkaAdminClient which the user hasn't specified an explicit name for.
+     * The next integer to use to name a RequestClient which the user hasn't specified an explicit name for.
      */
-    private static final AtomicInteger ADMIN_CLIENT_ID_SEQUENCE = new AtomicInteger(1);
+    private static final AtomicInteger REQUEST_CLIENT_ID_SEQUENCE = new AtomicInteger(1);
 
     /**
      * The prefix to use for the JMX metrics for this class
      */
-    private static final String JMX_PREFIX = "kafka.admin.client";
+    private static final String JMX_PREFIX = "kafka.request.client";
 
     /**
      * An invalid shutdown time which indicates that a shutdown has not yet been performed.
@@ -68,7 +69,7 @@ public class RequestClient implements AutoCloseable {
     private final int defaultTimeoutMs;
 
     /**
-     * The name of this AdminClient instance.
+     * The name of this RequestClient instance.
      */
     private final String clientId;
 
@@ -83,7 +84,7 @@ public class RequestClient implements AutoCloseable {
     private final Metadata metadata;
 
     /**
-     * The metrics for this KafkaAdminClient.
+     * The metrics for this RequestClient.
      */
     private final Metrics metrics;
 
@@ -93,12 +94,12 @@ public class RequestClient implements AutoCloseable {
     private final KafkaClient client;
 
     /**
-     * The runnable used in the service thread for this admin client.
+     * The runnable used in the service thread for this request client.
      */
-    private final AdminClientRunnable runnable;
+    private final RequestClientRunnable runnable;
 
     /**
-     * The network service thread for this admin client.
+     * The network service thread for this request client.
      */
     private final Thread thread;
 
@@ -160,7 +161,7 @@ public class RequestClient implements AutoCloseable {
         String clientId = config.getString(AdminClientConfig.CLIENT_ID_CONFIG);
         if (!clientId.isEmpty())
             return clientId;
-        return "adminclient-" + ADMIN_CLIENT_ID_SEQUENCE.getAndIncrement();
+        return "adminclient-" + REQUEST_CLIENT_ID_SEQUENCE.getAndIncrement();
     }
 
     /**
@@ -180,20 +181,20 @@ public class RequestClient implements AutoCloseable {
     }
 
     /**
-     * Create a new AdminClient with the given configuration.
+     * Create a new RequestClient with the given configuration.
      *
      * @param props The configuration.
-     * @return The new KafkaAdminClient.
+     * @return The new RequestClient.
      */
     public static RequestClient create(Properties props) {
         return createInternal(new AdminClientConfig(props), null);
     }
 
     /**
-     * Create a new AdminClient with the given configuration.
+     * Create a new RequestClient with the given configuration.
      *
      * @param conf The configuration.
-     * @return The new KafkaAdminClient.
+     * @return The new RequestClient.
      */
     public static RequestClient create(Map<String, Object> conf) {
         return createInternal(new AdminClientConfig(conf), null);
@@ -223,7 +224,7 @@ public class RequestClient implements AutoCloseable {
                 .tags(metricTags);
             reporters.add(new JmxReporter(JMX_PREFIX));
             metrics = new Metrics(metricConfig, reporters, time);
-            String metricGrpPrefix = "admin-client";
+            String metricGrpPrefix = "request-client";
             channelBuilder = ClientUtils.createChannelBuilder(config);
             selector = new Selector(config.getLong(AdminClientConfig.CONNECTIONS_MAX_IDLE_MS_CONFIG),
                     metrics, time, metricGrpPrefix, channelBuilder, logContext);
@@ -248,12 +249,12 @@ public class RequestClient implements AutoCloseable {
             closeQuietly(networkClient, "NetworkClient");
             closeQuietly(selector, "Selector");
             closeQuietly(channelBuilder, "ChannelBuilder");
-            throw new KafkaException("Failed create new KafkaAdminClient", exc);
+            throw new KafkaException("Failed create new RequestClient", exc);
         }
     }
 
     private static LogContext createLogContext(String clientId) {
-        return new LogContext("[AdminClient clientId=" + clientId + "] ");
+        return new LogContext("[RequestClient clientId=" + clientId + "] ");
     }
 
     private RequestClient(AdminClientConfig config, String clientId, Time time, Metadata metadata,
@@ -261,23 +262,23 @@ public class RequestClient implements AutoCloseable {
                           LogContext logContext) {
         this.defaultTimeoutMs = config.getInt(AdminClientConfig.REQUEST_TIMEOUT_MS_CONFIG);
         this.clientId = clientId;
-        this.log = logContext.logger(KafkaAdminClient.class);
+        this.log = logContext.logger(RequestClient.class);
         this.time = time;
         this.metadata = metadata;
         List<InetSocketAddress> addresses = ClientUtils.parseAndValidateAddresses(
             config.getList(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG));
-        this.metadata.update(Cluster.bootstrap(addresses), Collections.<String>emptySet(), time.milliseconds());
+        this.metadata.update(Cluster.bootstrap(addresses), emptySet(), time.milliseconds());
         this.metrics = metrics;
         this.client = client;
-        this.runnable = new AdminClientRunnable();
-        String threadName = "kafka-admin-client-thread | " + clientId;
+        this.runnable = new RequestClientRunnable();
+        String threadName = "kafka-request-client-thread | " + clientId;
         this.thread = new KafkaThread(threadName, runnable, true);
         this.timeoutProcessorFactory = (timeoutProcessorFactory == null) ?
             new TimeoutProcessorFactory() : timeoutProcessorFactory;
         this.maxRetries = config.getInt(AdminClientConfig.RETRIES_CONFIG);
         config.logUnused();
         AppInfoParser.registerAppInfo(JMX_PREFIX, clientId, metrics);
-        log.debug("Kafka admin client initialized");
+        log.debug("Kafka request client initialized");
         thread.start();
     }
 
@@ -303,9 +304,9 @@ public class RequestClient implements AutoCloseable {
     }
 
     /**
-     * Close the AdminClient and release all associated resources.
+     * Close the RequestClient and release all associated resources.
      *
-     * See {@link AdminClient#close(long, TimeUnit)}
+     * See {@link RequestClient#close(long, TimeUnit)}
      */
     @Override
     public void close() {
@@ -345,7 +346,7 @@ public class RequestClient implements AutoCloseable {
 
             AppInfoParser.unregisterAppInfo(JMX_PREFIX, clientId, metrics);
 
-            log.debug("Kafka admin client closed.");
+            log.debug("Kafka request client closed.");
         } catch (InterruptedException e) {
             log.debug("Interrupted while joining I/O thread", e);
             Thread.currentThread().interrupt();
@@ -380,10 +381,10 @@ public class RequestClient implements AutoCloseable {
         }
     }
 
-    public class ConstantNodeIdProvider implements NodeProvider {
+    public class ConstantIdNodeProvider implements NodeProvider {
         private final int nodeId;
 
-        ConstantNodeIdProvider(int nodeId) {
+        ConstantIdNodeProvider(int nodeId) {
             this.nodeId = nodeId;
         }
 
@@ -415,6 +416,10 @@ public class RequestClient implements AutoCloseable {
 
     public class LeaderForTopicPartitionNodeProvider implements NodeProvider {
         private final TopicPartition topicPartition;
+
+        public LeaderForTopicPartitionNodeProvider(String topic, int partition) {
+            this(new TopicPartition(topic, partition));
+        }
 
         public LeaderForTopicPartitionNodeProvider(TopicPartition topicPartition) {
             this.topicPartition = topicPartition;
@@ -648,7 +653,7 @@ public class RequestClient implements AutoCloseable {
         }
     }
 
-    private final class AdminClientRunnable implements Runnable {
+    private final class RequestClientRunnable implements Runnable {
         /**
          * Pending calls. Protected by the object monitor.
          * This will be null only if the thread has shut down.
@@ -656,7 +661,7 @@ public class RequestClient implements AutoCloseable {
         private List<Call> newCalls = new LinkedList<>();
 
         /**
-         * Check if the AdminClient metadata is ready.
+         * Check if the RequestClient metadata is ready.
          * We need to know who the controller is, and have a non-empty view of the cluster.
          *
          * @param prevMetadataVersion       The previous metadata version which wasn't usable.
@@ -1003,24 +1008,24 @@ public class RequestClient implements AutoCloseable {
             TimeoutProcessor timeoutProcessor = new TimeoutProcessor(Long.MAX_VALUE);
             synchronized (this) {
                 numTimedOut += timeoutProcessor.handleTimeouts(newCalls,
-                        "The AdminClient thread has exited.");
+                        "The RequestClient thread has exited.");
                 newCalls = null;
             }
             numTimedOut += timeoutProcessor.handleTimeouts(correlationIdToCalls.values(),
-                    "The AdminClient thread has exited.");
+                    "The RequestClient thread has exited.");
             if (numTimedOut > 0) {
                 log.debug("Timed out {} remaining operations.", numTimedOut);
             }
             closeQuietly(client, "KafkaClient");
             closeQuietly(metrics, "Metrics");
-            log.debug("Exiting AdminClientRunnable thread.");
+            log.debug("Exiting RequestClientRunnable thread.");
         }
 
         /**
          * Queue a call for sending.
          *
-         * If the AdminClient thread has exited, this will fail. Otherwise, it will succeed (even
-         * if the AdminClient is shutting down). This function should called when retrying an
+         * If the RequestClient thread has exited, this will fail. Otherwise, it will succeed (even
+         * if the RequestClient is shutting down). This function should called when retrying an
          * existing call.
          *
          * @param call      The new call object.
@@ -1041,22 +1046,22 @@ public class RequestClient implements AutoCloseable {
                 client.wakeup(); // wake the thread if it is in poll()
             } else {
                 log.debug("The AdminClient thread has exited. Timing out {}.", call);
-                call.fail(Long.MAX_VALUE, new TimeoutException("The AdminClient thread has exited."));
+                call.fail(Long.MAX_VALUE, new TimeoutException("The RequestClient thread has exited."));
             }
         }
 
         /**
          * Initiate a new call.
          *
-         * This will fail if the AdminClient is scheduled to shut down.
+         * This will fail if the RequestClient is scheduled to shut down.
          *
          * @param call      The new call object.
          * @param now       The current time in milliseconds.
          */
         void call(Call call, long now) {
             if (hardShutdownTimeMs.get() != INVALID_SHUTDOWN_TIME) {
-                log.debug("The AdminClient is not accepting new calls. Timing out {}.", call);
-                call.fail(Long.MAX_VALUE, new TimeoutException("The AdminClient thread is not accepting new calls."));
+                log.debug("The RequestClient is not accepting new calls. Timing out {}.", call);
+                call.fail(Long.MAX_VALUE, new TimeoutException("The RequestClient thread is not accepting new calls."));
             } else {
                 enqueue(call, now);
             }
