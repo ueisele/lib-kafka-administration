@@ -16,7 +16,6 @@ public class MetadataRequestDefinition extends RequestDefinition<MetadataRespons
     public static final List<String> ALL_TOPICS = null;
     public static final List<String> NO_TOPICS = emptyList();
 
-
     public static final List<String> DEFAULT_TOPIC_NAMES = ALL_TOPICS;
     public static final boolean DEFAULT_ALLOW_AUTO_TOPIC_CREATION = true;
 
