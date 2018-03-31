@@ -17,6 +17,8 @@
 
 package org.apache.kafka.clients.admin;
 
+import org.apache.commons.lang3.tuple.ImmutablePair;
+import org.apache.commons.lang3.tuple.Pair;
 import org.apache.kafka.clients.*;
 import org.apache.kafka.common.Cluster;
 import org.apache.kafka.common.KafkaException;
@@ -42,6 +44,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 import static java.util.Collections.emptySet;
+import static java.util.stream.Collectors.toList;
 import static org.apache.kafka.common.utils.Utils.closeQuietly;
 
 public class RequestClient implements AutoCloseable {
@@ -282,8 +285,34 @@ public class RequestClient implements AutoCloseable {
         thread.start();
     }
 
+    public NodeProvider toNode(int nodeId) {
+        return new ConstantIdNodeProvider(nodeId);
+    }
+
+    public NodeProvider toControllerNode() {
+        return new ControllerNodeProvider();
+    }
+
+    public NodeProvider toLeastLoadedNode() {
+        return new LeastLoadedNodeProvider();
+    }
+
+    public NodeProvider toLeaderForTopicPartitionNode(TopicPartition topicPartition) {
+        return new LeaderForTopicPartitionNodeProvider(topicPartition);
+    }
+
+    public NodeProvider toLeaderForTopicPartitionNode(String topic, int partition) {
+        return new LeaderForTopicPartitionNodeProvider(topic, partition);
+    }
+
+    public <T extends AbstractResponse> List<ResponseResult<T>> request(final List<RequestDefinition<T, ?>> requestDefinitions, final NodeProvider nodeProvider) {
+        return requestDefinitions.stream()
+                .map(requestDefinition -> request(requestDefinition, nodeProvider))
+                .collect(toList());
+    }
+
     public <T extends AbstractResponse> ResponseResult<T> request(final RequestDefinition<T, ?> requestDefinition, final NodeProvider nodeProvider) {
-        final KafkaFutureImpl<T> responseFuture = new KafkaFutureImpl<>();
+        final KafkaFutureImpl<ImmutablePair<Node, T>> responseFuture = new KafkaFutureImpl<>();
         final long now = time.milliseconds();
         runnable.call(new RequestResponseCall<>(requestDefinition, nodeProvider, calcDeadlineMs(now, requestDefinition.timeoutMs()), responseFuture), now);
         return new ResponseResult<>(responseFuture);
@@ -360,27 +389,6 @@ public class RequestClient implements AutoCloseable {
         Node provide();
     }
 
-    public class DirectNodeProvider implements NodeProvider {
-        private final Node node;
-
-        public DirectNodeProvider(int id, String host, int port) {
-            this(new Node(id, host, port));
-        }
-
-        public DirectNodeProvider(int id, String host, int port, String rack) {
-            this(new Node(id, host, port, rack));
-        }
-
-        public DirectNodeProvider(Node node) {
-            this.node = node;
-        }
-
-        @Override
-        public Node provide() {
-            return node;
-        }
-    }
-
     public class ConstantIdNodeProvider implements NodeProvider {
         private final int nodeId;
 
@@ -434,9 +442,9 @@ public class RequestClient implements AutoCloseable {
     class RequestResponseCall<T extends AbstractResponse> extends Call {
 
         private final RequestDefinition<T, ?> requestDefinition;
-        private final KafkaFutureImpl<T> responseFuture;
+        private final KafkaFutureImpl<ImmutablePair<Node, T>> responseFuture;
 
-        RequestResponseCall(RequestDefinition<T, ?> requestDefinition, NodeProvider nodeProvider, long deadlineMs, KafkaFutureImpl<T> responseFuture) {
+        RequestResponseCall(RequestDefinition<T, ?> requestDefinition, NodeProvider nodeProvider, long deadlineMs, KafkaFutureImpl<ImmutablePair<Node, T>> responseFuture) {
             super(requestDefinition.requestName(), deadlineMs, nodeProvider);
             this.requestDefinition = requestDefinition;
             this.responseFuture = responseFuture;
@@ -448,8 +456,8 @@ public class RequestClient implements AutoCloseable {
         }
 
         @Override
-        void handleResponse(AbstractResponse abstractResponse) {
-            responseFuture.complete(requestDefinition.response(abstractResponse));
+        void handleResponse(AbstractResponse abstractResponse, Node node) {
+            responseFuture.complete(ImmutablePair.of(node, requestDefinition.response(abstractResponse)));
         }
 
         @Override
@@ -551,9 +559,10 @@ public class RequestClient implements AutoCloseable {
          * Process the call response.
          *
          * @param abstractResponse  The AbstractResponse.
+         * @param node              The node
          *
          */
-        abstract void handleResponse(AbstractResponse abstractResponse);
+        abstract void handleResponse(AbstractResponse abstractResponse, Node node);
 
         /**
          * Handle a failure. This will only be called if the failure exception was not
@@ -616,20 +625,48 @@ public class RequestClient implements AutoCloseable {
          *
          * @return              The number of calls which were timed out.
          */
+        int handleTimeoutsForSent(Collection<Pair<Node, Call>> calls, String msg) {
+            int numTimedOut = 0;
+            for (Iterator<Pair<Node, Call>> iter = calls.iterator(); iter.hasNext(); ) {
+                Call call = iter.next().getRight();
+                if(handleTimeout(call, msg)) {
+                    iter.remove();
+                    numTimedOut++;
+                }
+            }
+            return numTimedOut;
+        }
+
+        /**
+         * Check for calls which have timed out.
+         * Timed out calls will be removed and failed.
+         * The remaining milliseconds until the next timeout will be updated.
+         *
+         * @param calls         The collection of calls.
+         *
+         * @return              The number of calls which were timed out.
+         */
         int handleTimeouts(Collection<Call> calls, String msg) {
             int numTimedOut = 0;
             for (Iterator<Call> iter = calls.iterator(); iter.hasNext(); ) {
                 Call call = iter.next();
-                int remainingMs = calcTimeoutMsRemainingAsInt(now, call.deadlineMs);
-                if (remainingMs < 0) {
-                    call.fail(now, new TimeoutException(msg));
+                if(handleTimeout(call, msg)) {
                     iter.remove();
                     numTimedOut++;
-                } else {
-                    nextTimeoutMs = Math.min(nextTimeoutMs, remainingMs);
                 }
             }
             return numTimedOut;
+        }
+
+        boolean handleTimeout(Call call, String msg) {
+            int remainingMs = calcTimeoutMsRemainingAsInt(now, call.deadlineMs);
+            if (remainingMs < 0) {
+                call.fail(now, new TimeoutException(msg));
+                return true;
+            } else {
+                nextTimeoutMs = Math.min(nextTimeoutMs, remainingMs);
+                return false;
+            }
         }
 
         /**
@@ -769,7 +806,8 @@ public class RequestClient implements AutoCloseable {
          * @return                      The minimum timeout we need for poll().
          */
         private long sendEligibleCalls(long now, Map<Node, List<Call>> callsToSend,
-                         Map<Integer, Call> correlationIdToCalls, Map<String, List<Call>> callsInFlight) {
+                                       Map<Integer, Pair<Node, Call>> correlationIdToCalls,
+                                       Map<String, List<Call>> callsInFlight) {
             long pollTimeout = Long.MAX_VALUE;
             for (Iterator<Map.Entry<Node, List<Call>>> iter = callsToSend.entrySet().iterator();
                  iter.hasNext(); ) {
@@ -800,7 +838,7 @@ public class RequestClient implements AutoCloseable {
                 log.trace("Sending {} to {}. correlationId={}", requestBuilder, node, clientRequest.correlationId());
                 client.send(clientRequest, now);
                 getOrCreateListValue(callsInFlight, node.idString()).add(call);
-                correlationIdToCalls.put(clientRequest.correlationId(), call);
+                correlationIdToCalls.put(clientRequest.correlationId(), Pair.of(node, call));
             }
             return pollTimeout;
         }
@@ -883,12 +921,12 @@ public class RequestClient implements AutoCloseable {
          * @param callsInFlight         A map of nodes to the calls they have in flight.
         **/
         private void handleResponses(long now, List<ClientResponse> responses, Map<String, List<Call>> callsInFlight,
-                                     Map<Integer, Call> correlationIdToCall) {
+                                     Map<Integer, Pair<Node, Call>> correlationIdToCall) {
             for (ClientResponse response : responses) {
                 int correlationId = response.requestHeader().correlationId();
 
-                Call call = correlationIdToCall.get(correlationId);
-                if (call == null) {
+                Pair<Node, Call> nodeAndcall = correlationIdToCall.get(correlationId);
+                if (nodeAndcall == null || nodeAndcall.getRight() == null) {
                     // If the server returns information about a correlation ID we didn't use yet,
                     // an internal server error has occurred. Close the connection and log an error message.
                     log.error("Internal server error on {}: server returned information about unknown " +
@@ -897,7 +935,8 @@ public class RequestClient implements AutoCloseable {
                     client.disconnect(response.destination());
                     continue;
                 }
-
+                Node node = nodeAndcall.getLeft();
+                Call call = nodeAndcall.getRight();
                 // Stop tracking this call.
                 correlationIdToCall.remove(correlationId);
                 List<Call> calls = callsInFlight.get(response.destination());
@@ -917,7 +956,7 @@ public class RequestClient implements AutoCloseable {
                         call.callName, correlationId, response.destination())));
                 } else {
                     try {
-                        call.handleResponse(response.responseBody());
+                        call.handleResponse(response.responseBody(), node);
                         if (log.isTraceEnabled())
                             log.trace("{} got response {}", call,
                                     response.responseBody().toString(response.requestHeader().apiVersion()));
@@ -931,7 +970,7 @@ public class RequestClient implements AutoCloseable {
         }
 
         private synchronized boolean threadShouldExit(long now, long curHardShutdownTimeMs,
-                                                      Map<Node, List<Call>> callsToSend, Map<Integer, Call> correlationIdToCalls) {
+                                                      Map<Node, List<Call>> callsToSend, Map<Integer, Pair<Node, Call>> correlationIdToCalls) {
             if (newCalls.isEmpty() && callsToSend.isEmpty() && correlationIdToCalls.isEmpty()) {
                 log.trace("All work has been completed, and the I/O thread is now exiting.");
                 return true;
@@ -959,7 +998,7 @@ public class RequestClient implements AutoCloseable {
             /*
              * Maps correlation IDs to calls that have been sent.
              */
-            Map<Integer, Call> correlationIdToCalls = new HashMap<>();
+            Map<Integer, Pair<Node, Call>> correlationIdToCalls = new HashMap<>();
 
             /*
              * The previous metadata version which wasn't usable, or null if there is none.
@@ -1007,11 +1046,10 @@ public class RequestClient implements AutoCloseable {
             int numTimedOut = 0;
             TimeoutProcessor timeoutProcessor = new TimeoutProcessor(Long.MAX_VALUE);
             synchronized (this) {
-                numTimedOut += timeoutProcessor.handleTimeouts(newCalls,
-                        "The RequestClient thread has exited.");
+                numTimedOut += timeoutProcessor.handleTimeouts(newCalls, "The RequestClient thread has exited.");
                 newCalls = null;
             }
-            numTimedOut += timeoutProcessor.handleTimeouts(correlationIdToCalls.values(),
+            numTimedOut += timeoutProcessor.handleTimeoutsForSent(correlationIdToCalls.values(),
                     "The RequestClient thread has exited.");
             if (numTimedOut > 0) {
                 log.debug("Timed out {} remaining operations.", numTimedOut);
@@ -1045,7 +1083,7 @@ public class RequestClient implements AutoCloseable {
             if (accepted) {
                 client.wakeup(); // wake the thread if it is in poll()
             } else {
-                log.debug("The AdminClient thread has exited. Timing out {}.", call);
+                log.debug("The RequestClient thread has exited. Timing out {}.", call);
                 call.fail(Long.MAX_VALUE, new TimeoutException("The RequestClient thread has exited."));
             }
         }

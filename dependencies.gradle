@@ -6,6 +6,7 @@ ext {
 }
 
 versions += [
+        commonslang3: "3.7",
         junit: "4.12",
         kafka: "1.1.0",
         scala: "2.12.5",
@@ -15,6 +16,7 @@ versions += [
 versions["baseScala"] = versions.scala.substring(0, versions.scala.lastIndexOf("."))
 
 libs += [
+        commonslang3: "org.apache.commons:commons-lang3:$versions.commonslang3",
         junit: "junit:junit:$versions.junit",
         kafkaclients: "org.apache.kafka:kafka-clients:$versions.kafka",
         scala: "org.scala-lang:scala-library:$versions.scala",

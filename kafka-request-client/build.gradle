@@ -1,6 +1,7 @@
 apply plugin: 'scala'
 
 dependencies {
+    compile libs.commonslang3
     compile libs.kafkaclients
     compile libs.scala
 
