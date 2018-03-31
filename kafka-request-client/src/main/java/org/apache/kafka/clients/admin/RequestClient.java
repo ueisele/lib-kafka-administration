@@ -305,9 +305,21 @@ public class RequestClient implements AutoCloseable {
         return new LeaderForTopicPartitionNodeProvider(topic, partition);
     }
 
+    public List<NodeProvider> toAllNodes() {
+        return metadata.fetch().nodes().stream()
+                .map(ConstantNodeProvider::new)
+                .collect(toList());
+    }
+
     public <T extends AbstractResponse> List<ResponseResult<T>> request(final List<RequestDefinition<T, ?>> requestDefinitions, final NodeProvider nodeProvider) {
         return requestDefinitions.stream()
                 .map(requestDefinition -> request(requestDefinition, nodeProvider))
+                .collect(toList());
+    }
+
+    public <T extends AbstractResponse> List<ResponseResult<T>> request(final RequestDefinition<T, ?> requestDefinition, final List<NodeProvider> nodeProviders) {
+        return nodeProviders.stream()
+                .map(nodeProvider -> request(requestDefinition, nodeProvider))
                 .collect(toList());
     }
 
@@ -389,7 +401,20 @@ public class RequestClient implements AutoCloseable {
         Node provide();
     }
 
-    public class ConstantIdNodeProvider implements NodeProvider {
+    private class ConstantNodeProvider implements NodeProvider {
+        private final Node node;
+
+        public ConstantNodeProvider(Node node) {
+            this.node = node;
+        }
+
+        @Override
+        public Node provide() {
+            return node;
+        }
+    }
+
+    private class ConstantIdNodeProvider implements NodeProvider {
         private final int nodeId;
 
         ConstantIdNodeProvider(int nodeId) {
@@ -405,7 +430,7 @@ public class RequestClient implements AutoCloseable {
     /**
      * Provides the controller node.
      */
-    public class ControllerNodeProvider implements NodeProvider {
+    private class ControllerNodeProvider implements NodeProvider {
         @Override
         public Node provide() {
             return metadata.fetch().controller();
@@ -415,14 +440,14 @@ public class RequestClient implements AutoCloseable {
     /**
      * Provides the least loaded node.
      */
-    public class LeastLoadedNodeProvider implements NodeProvider {
+    private class LeastLoadedNodeProvider implements NodeProvider {
         @Override
         public Node provide() {
             return client.leastLoadedNode(time.milliseconds());
         }
     }
 
-    public class LeaderForTopicPartitionNodeProvider implements NodeProvider {
+    private class LeaderForTopicPartitionNodeProvider implements NodeProvider {
         private final TopicPartition topicPartition;
 
         public LeaderForTopicPartitionNodeProvider(String topic, int partition) {
