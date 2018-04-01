@@ -200,7 +200,7 @@ public class RequestClient implements AutoCloseable {
      * @param conf The configuration.
      * @return The new RequestClient.
      */
-    public static RequestClient create(Map<String, Object> conf) {
+    public static RequestClient create(Map<String, ?> conf) {
         return createInternal(new AdminClientConfig(conf), null);
     }
 
@@ -284,6 +284,10 @@ public class RequestClient implements AutoCloseable {
         AppInfoParser.registerAppInfo(JMX_PREFIX, clientId, metrics);
         log.debug("Kafka request client initialized");
         thread.start();
+    }
+
+    public NodeProvider toNode(String host, int port) {
+        return new HostPortNodeProvider(host, port);
     }
 
     public NodeProvider toNode(int nodeId) {
@@ -412,6 +416,23 @@ public class RequestClient implements AutoCloseable {
         @Override
         public Node provide() {
             return node;
+        }
+    }
+
+    private class HostPortNodeProvider implements NodeProvider {
+        private final String host;
+        private final int port;
+
+        HostPortNodeProvider(String host, int port) {
+            this.host = host;
+            this.port = port;
+        }
+
+        @Override
+        public Node provide() {
+            return metadata.fetch().nodes().stream()
+                    .filter(node -> Objects.equals(node.host(), host) && Objects.equals(node.port(), port))
+                    .findAny().orElse(null);
         }
     }
 

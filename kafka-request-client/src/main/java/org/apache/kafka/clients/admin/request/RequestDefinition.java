@@ -38,9 +38,9 @@ public abstract class RequestDefinition<R extends AbstractResponse, T extends Re
         return requestName;
     }
 
-    public abstract AbstractRequest.Builder<?> requestBuilder(long timeoutMs);
+    abstract AbstractRequest.Builder<?> requestBuilder(long timeoutMs);
 
-    public R response(AbstractResponse abstractResponse) {
+    R response(AbstractResponse abstractResponse) {
         return responseType.cast(abstractResponse);
     }
 

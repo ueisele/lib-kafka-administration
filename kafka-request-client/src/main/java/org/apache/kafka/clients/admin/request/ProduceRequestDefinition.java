@@ -28,7 +28,7 @@ public class ProduceRequestDefinition extends RequestDefinition<ProduceResponse,
     }
 
     @Override
-    public AbstractRequest.Builder<?> requestBuilder(long timeoutMs) {
+    AbstractRequest.Builder<?> requestBuilder(long timeoutMs) {
         return ProduceRequest.Builder.forMagic(magic, acks, (int) timeoutMs, partitionRecords, transactionalId);
     }
 

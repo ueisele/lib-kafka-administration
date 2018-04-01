@@ -31,7 +31,7 @@ public class ListOffsetRequestDefinition extends RequestDefinition<ListOffsetRes
     }
 
     @Override
-    public AbstractRequest.Builder<?> requestBuilder(long timeoutMs) {
+    AbstractRequest.Builder<?> requestBuilder(long timeoutMs) {
         Constructor<ListOffsetRequest.Builder> builderConstructor;
         try {
             builderConstructor = ListOffsetRequest.Builder.class.getConstructor(short.class, short.class, int.class, IsolationLevel.class);

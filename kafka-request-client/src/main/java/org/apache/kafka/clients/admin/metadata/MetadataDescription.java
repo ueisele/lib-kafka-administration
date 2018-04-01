@@ -62,7 +62,7 @@ public class MetadataDescription {
     }
 
     public Map<String, Object> toMap() {
-        Map<String, Object> map = new HashMap<>();
+        Map<String, Object> map = new LinkedHashMap<>();
         if(source != null) {
             map.put("source", source.toString());
         }

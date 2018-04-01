@@ -8,16 +8,31 @@ import static java.util.stream.Collectors.toList;
 
 public class ClusterDescription {
 
+    private String clusterId;
     private KafkaUri controller;
     private Set<KafkaUri> nodes;
 
     public ClusterDescription() {
-        this(null, null);
+        this(null, null, null);
     }
 
-    public ClusterDescription(KafkaUri controller, Set<KafkaUri> nodes) {
+    public ClusterDescription(String clusterId) {
+        this(clusterId, null, null);
+    }
+
+    public ClusterDescription(String clusterId, KafkaUri controller, Set<KafkaUri> nodes) {
+        this.clusterId = clusterId;
         this.controller = controller;
         this.nodes = nodes;
+    }
+
+    public String clusterId() {
+        return clusterId;
+    }
+
+    public ClusterDescription withClusterId(String clusterId) {
+        this.clusterId = clusterId;
+        return this;
     }
 
     public KafkaUri controller() {
@@ -47,7 +62,10 @@ public class ClusterDescription {
     }
 
     public Map<String, Object> toMap()  {
-        Map<String, Object> map = new HashMap<>();
+        Map<String, Object> map = new LinkedHashMap<>();
+        if(clusterId != null) {
+            map.put("clusterId", clusterId);
+        }
         if(controller != null) {
             map.put("controller", controller.toString());
         }
@@ -60,7 +78,8 @@ public class ClusterDescription {
     @Override
     public String toString() {
         return "ClusterDescription{" +
-                "controller=" + controller +
+                "clusterId='" + clusterId + '\'' +
+                ", controller=" + controller +
                 ", nodes=" + nodes +
                 '}';
     }
@@ -70,12 +89,13 @@ public class ClusterDescription {
         if (this == o) return true;
         if (o == null || getClass() != o.getClass()) return false;
         ClusterDescription that = (ClusterDescription) o;
-        return Objects.equals(controller, that.controller) &&
+        return Objects.equals(clusterId, that.clusterId) &&
+                Objects.equals(controller, that.controller) &&
                 Objects.equals(nodes, that.nodes);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(controller, nodes);
+        return Objects.hash(clusterId, controller, nodes);
     }
 }

@@ -76,7 +76,7 @@ public class TopicDescription {
     }
 
     public Map<String, Object> toMap() {
-        Map<String, Object> map = new HashMap<>();
+        Map<String, Object> map = new LinkedHashMap<>();
         if(topic != null) {
             map.put("topic", topic);
         }

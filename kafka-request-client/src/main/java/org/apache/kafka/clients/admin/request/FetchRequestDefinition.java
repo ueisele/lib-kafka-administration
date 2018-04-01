@@ -34,7 +34,7 @@ public class FetchRequestDefinition extends RequestDefinition<FetchResponse, Fet
     }
 
     @Override
-    public AbstractRequest.Builder<?> requestBuilder(long timeoutMs) {
+    AbstractRequest.Builder<?> requestBuilder(long timeoutMs) {
         return new FetchRequest.Builder(minVersion, maxVersion, replicaId, (int) timeoutMs, minBytes, fetchData);
     }
 

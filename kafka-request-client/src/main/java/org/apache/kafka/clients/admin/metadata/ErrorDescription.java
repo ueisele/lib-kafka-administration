@@ -1,33 +1,25 @@
 package org.apache.kafka.clients.admin.metadata;
 
-import java.util.HashMap;
-import java.util.List;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
 
 public class ErrorDescription {
 
-    private String name;
     private Integer id;
-    private String description;
+    private String name;
+    private String exceptionName;
+    private String message;
 
     public ErrorDescription() {
-        this(null, null, null);
+        this(null, null, null, null);
     }
 
-    public ErrorDescription(String name, Integer id, String description) {
-        this.name = name;
+    public ErrorDescription(Integer id, String name, String exceptionName, String message) {
         this.id = id;
-        this.description = description;
-    }
-
-    public String name() {
-        return name;
-    }
-
-    public ErrorDescription withName(String name) {
         this.name = name;
-        return this;
+        this.exceptionName = exceptionName;
+        this.message = message;
     }
 
     public Integer id() {
@@ -39,25 +31,46 @@ public class ErrorDescription {
         return this;
     }
 
-    public String description() {
-        return description;
+    public String name() {
+        return name;
     }
 
-    public ErrorDescription withDescription(String description) {
-        this.description = description;
+    public ErrorDescription withName(String name) {
+        this.name = name;
+        return this;
+    }
+
+    public String exceptionName() {
+        return exceptionName;
+    }
+
+    public ErrorDescription withExceptionName(String exceptionName) {
+        this.exceptionName = exceptionName;
+        return this;
+    }
+
+    public String message() {
+        return message;
+    }
+
+    public ErrorDescription withMessage(String message) {
+        this.message = message;
         return this;
     }
 
     public Map<String, Object> toMap() {
-        Map<String, Object> map = new HashMap<>();
-        if(name != null) {
-            map.put("name", name);
-        }
+        Map<String, Object> map = new LinkedHashMap<>();
         if(id != null) {
             map.put("id", id);
         }
-        if(description != null) {
-            map.put("description", description);
+        if(name != null) {
+            map.put("name", name);
+        }
+        if(exceptionName != null) {
+            map.put("exceptionName", name);
+        }
+        if(message != null) {
+            map.put("message", message);
         }
         return map;
     }
@@ -65,9 +78,10 @@ public class ErrorDescription {
     @Override
     public String toString() {
         return "ErrorDescription{" +
-                "name='" + name + '\'' +
-                ", id=" + id +
-                ", description='" + description + '\'' +
+                "id=" + id +
+                ", name='" + name + '\'' +
+                ", exceptionName='" + exceptionName + '\'' +
+                ", message='" + message + '\'' +
                 '}';
     }
 
@@ -76,14 +90,14 @@ public class ErrorDescription {
         if (this == o) return true;
         if (o == null || getClass() != o.getClass()) return false;
         ErrorDescription that = (ErrorDescription) o;
-        return Objects.equals(name, that.name) &&
-                Objects.equals(id, that.id) &&
-                Objects.equals(description, that.description);
+        return Objects.equals(id, that.id) &&
+                Objects.equals(name, that.name) &&
+                Objects.equals(exceptionName, that.exceptionName) &&
+                Objects.equals(message, that.message);
     }
 
     @Override
     public int hashCode() {
-
-        return Objects.hash(name, id, description);
+        return Objects.hash(id, name, exceptionName, message);
     }
 }

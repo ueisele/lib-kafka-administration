@@ -44,7 +44,7 @@ public class GenericRequestDefinition<R extends AbstractResponse> extends Reques
     }
 
     @Override
-    public AbstractRequest.Builder<?> requestBuilder(long timeoutMs) {
+    AbstractRequest.Builder<?> requestBuilder(long timeoutMs) {
         return requestBuilderSupplier.apply(timeoutMs);
     }
 

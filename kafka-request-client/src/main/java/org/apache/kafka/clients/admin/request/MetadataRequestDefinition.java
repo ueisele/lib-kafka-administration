@@ -27,7 +27,7 @@ public class MetadataRequestDefinition extends RequestDefinition<MetadataRespons
     }
 
     @Override
-    public AbstractRequest.Builder<?> requestBuilder(long timeoutMs) {
+    AbstractRequest.Builder<?> requestBuilder(long timeoutMs) {
         return new MetadataRequest.Builder(new ArrayList<>(topicNames), allowAutoTopicCreation);
     }
 

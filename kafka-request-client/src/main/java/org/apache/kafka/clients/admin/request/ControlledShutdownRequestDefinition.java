@@ -18,7 +18,7 @@ public class ControlledShutdownRequestDefinition extends RequestDefinition<Contr
     }
 
     @Override
-    public AbstractRequest.Builder<?> requestBuilder(long timeoutMs) {
+    AbstractRequest.Builder<?> requestBuilder(long timeoutMs) {
         return new ControlledShutdownRequest.Builder(shutdownBrokerId(), desiredVersion());
     }
 

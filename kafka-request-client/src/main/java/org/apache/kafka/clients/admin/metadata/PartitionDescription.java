@@ -112,7 +112,7 @@ public class PartitionDescription {
     }
 
     public Map<String, Object> toMap() {
-        Map<String, Object> map = new HashMap<>();
+        Map<String, Object> map = new LinkedHashMap<>();
         if(partition != null) {
             map.put("partition", partition);
         }

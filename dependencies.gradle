@@ -7,18 +7,27 @@ ext {
 
 versions += [
         commonslang3: "3.7",
+        jopt: "5.0.4",
         junit: "4.12",
         kafka: "1.1.0",
+        log4j: "1.2.17",
         scala: "2.12.5",
-        scalaTest: "3.0.5"
+        scalaLogging: "3.7.2",
+        scalaTest: "3.0.5",
+        slf4j: "1.7.25"
 ]
 
 versions["baseScala"] = versions.scala.substring(0, versions.scala.lastIndexOf("."))
 
 libs += [
         commonslang3: "org.apache.commons:commons-lang3:$versions.commonslang3",
+        joptSimple: "net.sf.jopt-simple:jopt-simple:$versions.jopt",
         junit: "junit:junit:$versions.junit",
         kafkaclients: "org.apache.kafka:kafka-clients:$versions.kafka",
+        log4j: "log4j:log4j:$versions.log4j",
         scala: "org.scala-lang:scala-library:$versions.scala",
-        scalaTest: "org.scalatest:scalatest_$versions.baseScala:$versions.scalaTest"
+        scalaLogging: "com.typesafe.scala-logging:scala-logging_$versions.baseScala:$versions.scalaLogging",
+        scalaTest: "org.scalatest:scalatest_$versions.baseScala:$versions.scalaTest",
+        slf4jApi: "org.slf4j:slf4j-api:$versions.slf4j",
+        slf4jlog4j: "org.slf4j:slf4j-log4j12:$versions.slf4j"
 ]
