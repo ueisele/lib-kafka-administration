@@ -1,10 +1,12 @@
 apply plugin: 'scala'
 
 dependencies {
-    compile group: 'com.google.guava', name: 'guava', version: '24.1-jre'
-    compile libs.commonslang3
+    compile libs.commonsLang3
+    compile libs.jacksonCore
+    compile libs.jacksonDatabind
+    compile libs.jacksonDataformatYaml
     compile libs.joptSimple
-    compile libs.kafkaclients
+    compile libs.kafkaClients
     compile libs.log4j
     compile libs.scala
     compile libs.scalaLogging
