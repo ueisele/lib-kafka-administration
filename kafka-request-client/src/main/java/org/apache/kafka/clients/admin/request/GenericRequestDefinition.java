@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-package org.apache.kafka.clients.admin;
+package org.apache.kafka.clients.admin.request;
 
 import org.apache.kafka.common.requests.AbstractRequest;
 import org.apache.kafka.common.requests.AbstractResponse;

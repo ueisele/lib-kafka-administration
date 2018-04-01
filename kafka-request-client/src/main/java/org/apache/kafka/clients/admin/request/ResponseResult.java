@@ -1,4 +1,4 @@
-package org.apache.kafka.clients.admin;
+package org.apache.kafka.clients.admin.request;
 
 import org.apache.commons.lang3.tuple.ImmutablePair;
 import org.apache.kafka.common.KafkaFuture;

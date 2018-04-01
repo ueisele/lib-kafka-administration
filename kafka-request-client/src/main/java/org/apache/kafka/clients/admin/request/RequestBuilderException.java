@@ -1,4 +1,4 @@
-package org.apache.kafka.clients.admin;
+package org.apache.kafka.clients.admin.request;
 
 public class RequestBuilderException extends RuntimeException {
 

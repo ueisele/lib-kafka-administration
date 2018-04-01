@@ -1,4 +1,4 @@
-package org.apache.kafka.clients.admin;
+package org.apache.kafka.clients.admin.request;
 
 import org.apache.kafka.common.protocol.ApiKeys;
 import org.apache.kafka.common.requests.AbstractRequest;
