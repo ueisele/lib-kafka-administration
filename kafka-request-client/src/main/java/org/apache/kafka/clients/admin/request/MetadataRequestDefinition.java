@@ -5,7 +5,6 @@ import org.apache.kafka.common.requests.AbstractRequest;
 import org.apache.kafka.common.requests.MetadataRequest;
 import org.apache.kafka.common.requests.MetadataResponse;
 
-import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 
@@ -28,7 +27,7 @@ public class MetadataRequestDefinition extends RequestDefinition<MetadataRespons
 
     @Override
     AbstractRequest.Builder<?> requestBuilder(long timeoutMs) {
-        return new MetadataRequest.Builder(new ArrayList<>(topicNames), allowAutoTopicCreation);
+        return new MetadataRequest.Builder(topicNames, allowAutoTopicCreation);
     }
 
     public Collection<String> topicNames() {

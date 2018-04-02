@@ -311,6 +311,11 @@ public class RequestClient implements AutoCloseable {
     }
 
     public List<NodeProvider> toAllNodes() {
+        try {
+            metadata.awaitUpdate(metadata.requestUpdate(), 5000);
+        } catch (InterruptedException e) {
+            //Do nothing
+        }
         return metadata.fetch().nodes().stream()
                 .map(ConstantNodeProvider::new)
                 .collect(toList());
@@ -878,7 +883,7 @@ public class RequestClient implements AutoCloseable {
                     requestBuilder = call.createRequest(timeoutMs);
                 } catch (Throwable throwable) {
                     call.fail(now, new KafkaException(String.format(
-                        "Internal error sending %s to %s.", call.callName, node)));
+                        "Internal error sending %s to %s.", call.callName, node), throwable));
                     continue;
                 }
                 ClientRequest clientRequest = client.newClientRequest(node.idString(), requestBuilder, now, true);

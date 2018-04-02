@@ -1,10 +1,9 @@
 package org.apache.kafka.clients.admin
 
+import java.util.concurrent.Future
 import java.util.concurrent.TimeUnit.SECONDS
-import java.util.concurrent.{CompletableFuture, TimeUnit}
 import java.util.stream.Collectors
 
-import com.google.common.util.concurrent.Futures
 import joptsimple.OptionParser
 import org.apache.kafka.clients.CommonClientConfigs
 import org.apache.kafka.clients.admin.mapper.Mapper.mapperByFormat
@@ -13,7 +12,6 @@ import org.apache.kafka.clients.admin.request.RequestClient
 import org.apache.kafka.clients.admin.request.RequestClient.NodeProvider
 import org.apache.kafka.clients.admin.utils.{CommandLineUtils, Logging}
 import org.apache.kafka.common.utils.{Exit, Utils}
-import sun.util.calendar.CalendarDate
 
 import scala.collection.JavaConverters._
 import scala.collection.Map
@@ -35,9 +33,9 @@ object MetadataCommand extends Logging{
       val metadataClient = new MetadataClient(requestClient)
       val nodeProviders = nodeProvidersByOpts(metadataClient, opts)
       val responseFutures = metadataClient.describe(nodeProviders.asJava)
-      val allResponses = responseFutures.stream().map(future => future.get(60, SECONDS)).collect(Collectors.toList());
+      val allResponses = responseFutures.asScala.map(_.get()).map(_.toMap()).toList
       val mapper = mapperByFormat(opts.options.valueOf(opts.formatOpt))
-      println(mapper.map(allResponses))
+      println(mapper.map(allResponses.asJava))
     } catch {
       case e: Throwable =>
         println("Error while executing metadata command : " + e.getMessage)

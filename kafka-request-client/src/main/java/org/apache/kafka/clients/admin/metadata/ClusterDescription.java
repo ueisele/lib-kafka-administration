@@ -55,7 +55,7 @@ public class ClusterDescription {
 
     public ClusterDescription addNode(KafkaUri node) {
         if(nodes == null) {
-            nodes = new HashSet<>();
+            nodes = new TreeSet<>();
         }
         nodes.add(node);
         return this;

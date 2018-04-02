@@ -58,7 +58,7 @@ public class MetadataResponseToMetadataDescriptionMapper implements Function<Pai
                 .withTopic(topicMetadata.topic())
                 .withIsInternal(topicMetadata.isInternal())
                 .withPartitions(toPartitionDescriptions(topicMetadata.partitionMetadata()))
-                .withError(toErrorDescription(topicMetadata.error()));
+                .withError(!topicMetadata.error().equals(Errors.NONE) ? toErrorDescription(topicMetadata.error()) : null);
     }
 
     private List<PartitionDescription> toPartitionDescriptions(List<MetadataResponse.PartitionMetadata> partitionMetadatas) {
@@ -74,7 +74,7 @@ public class MetadataResponseToMetadataDescriptionMapper implements Function<Pai
                 .withReplicas(toNodeIds(partitionMetadata.replicas()))
                 .withIsr(toNodeIds(partitionMetadata.isr()))
                 .withOfflineReplicas(toNodeIds(partitionMetadata.offlineReplicas()))
-                .withError(toErrorDescription(partitionMetadata.error()));
+                .withError(!partitionMetadata.error().equals(Errors.NONE) ? toErrorDescription(partitionMetadata.error()) : null);
     }
 
     private List<Integer> toNodeIds(List<Node> nodes) {
