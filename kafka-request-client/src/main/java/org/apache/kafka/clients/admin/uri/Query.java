@@ -2,7 +2,7 @@ package org.apache.kafka.clients.admin.uri;
 
 import org.apache.commons.lang3.tuple.Pair;
 
-import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -19,7 +19,7 @@ public class Query {
     private Map<String, String> params;
 
     public Query() {
-        this(new HashMap<>());
+        this(new LinkedHashMap<>());
     }
 
     public Query(Map<String, String> params) {

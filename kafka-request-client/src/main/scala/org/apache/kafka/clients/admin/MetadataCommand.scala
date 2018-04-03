@@ -33,7 +33,7 @@ object MetadataCommand extends Logging{
       val metadataClient = new MetadataClient(requestClient)
       val nodeProviders = nodeProvidersByOpts(metadataClient, opts)
       val responseFutures = metadataClient.describe(nodeProviders.asJava)
-      val allResponses = responseFutures.asScala.map(_.get()).map(_.toMap()).toList
+      val allResponses = responseFutures.asScala.map(_.get()).sortBy(r => r.source().toString).map(_.toMap()).toList
       val mapper = mapperByFormat(opts.options.valueOf(opts.formatOpt))
       println(mapper.map(allResponses.asJava))
     } catch {
@@ -81,10 +81,11 @@ object MetadataCommand extends Logging{
       .withRequiredArg
       .describedAs("nodes")
       .defaultsTo("any")
+      .withValuesSeparatedBy(",")
       .ofType(classOf[String])
-    val formatOpt = parser.accepts("format", "The output format. Supported values are 'json' or 'yaml'. Default value is 'yaml'.")
+    val formatOpt = parser.accepts("format", "The output format. Supported values are 'json' or 'yaml'. Default value is 'json'.")
       .withRequiredArg()
-      .defaultsTo("yaml")
+      .defaultsTo("json")
       .ofType(classOf[String])
 
     val options = parser.parse(args : _*)

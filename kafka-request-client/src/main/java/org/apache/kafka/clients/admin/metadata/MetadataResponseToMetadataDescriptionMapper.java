@@ -7,12 +7,11 @@ import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.requests.MetadataResponse;
 
 import java.util.Collection;
+import java.util.Comparator;
 import java.util.List;
-import java.util.Set;
 import java.util.function.Function;
 
 import static java.util.stream.Collectors.toList;
-import static java.util.stream.Collectors.toSet;
 
 public class MetadataResponseToMetadataDescriptionMapper implements Function<Pair<Node, MetadataResponse>, MetadataDescription> {
 
@@ -36,8 +35,11 @@ public class MetadataResponseToMetadataDescriptionMapper implements Function<Pai
         return new KafkaUri(node.host(), node.port(), node.id(), node.rack());
     }
 
-    private Set<KafkaUri> toKafkaUris(Collection<Node> nodes) {
-        return nodes.stream().map(this::toKafkaUri).collect(toSet());
+    private List<KafkaUri> toKafkaUris(Collection<Node> nodes) {
+        return nodes.stream()
+                .map(this::toKafkaUri)
+                .sorted(Comparator.comparing(KafkaUri::toString))
+                .collect(toList());
     }
 
     private ClusterDescription toClusterDescription(MetadataResponse metadataResponse) {
@@ -50,6 +52,7 @@ public class MetadataResponseToMetadataDescriptionMapper implements Function<Pai
     private List<TopicDescription> toTopicDescriptions(Collection<MetadataResponse.TopicMetadata> topicMetadatas) {
         return topicMetadatas.stream()
                 .map(this::toTopicDescription)
+                .sorted(Comparator.comparing(TopicDescription::topic))
                 .collect(toList());
     }
 
@@ -64,6 +67,7 @@ public class MetadataResponseToMetadataDescriptionMapper implements Function<Pai
     private List<PartitionDescription> toPartitionDescriptions(List<MetadataResponse.PartitionMetadata> partitionMetadatas) {
         return partitionMetadatas.stream()
                 .map(this::toPartitionDescription)
+                .sorted(Comparator.comparing(PartitionDescription::partition))
                 .collect(toList());
     }
 

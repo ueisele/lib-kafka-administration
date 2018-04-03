@@ -7,7 +7,7 @@ import java.util.Objects;
 import static java.util.Objects.requireNonNull;
 import static java.util.Optional.ofNullable;
 
-public class Uri implements Comparable<Uri> {
+public class Uri {
 
     protected final Scheme scheme;
     protected final Authority authority;
@@ -93,15 +93,4 @@ public class Uri implements Comparable<Uri> {
         return Objects.hash(scheme, authority, path, query);
     }
 
-    @Override
-    public int compareTo(Uri other) {
-        if(other == null) {
-            return -1;
-        }
-        int schemeCompare = scheme.compareTo(other.scheme);
-        if(schemeCompare!=0) {
-            return schemeCompare;
-        }
-        return 0;
-    }
 }

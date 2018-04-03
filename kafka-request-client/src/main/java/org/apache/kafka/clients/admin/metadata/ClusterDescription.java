@@ -10,7 +10,7 @@ public class ClusterDescription {
 
     private String clusterId;
     private KafkaUri controller;
-    private Set<KafkaUri> nodes;
+    private List<KafkaUri> nodes;
 
     public ClusterDescription() {
         this(null, null, null);
@@ -20,7 +20,7 @@ public class ClusterDescription {
         this(clusterId, null, null);
     }
 
-    public ClusterDescription(String clusterId, KafkaUri controller, Set<KafkaUri> nodes) {
+    public ClusterDescription(String clusterId, KafkaUri controller, List<KafkaUri> nodes) {
         this.clusterId = clusterId;
         this.controller = controller;
         this.nodes = nodes;
@@ -44,18 +44,18 @@ public class ClusterDescription {
         return this;
     }
 
-    public Set<KafkaUri> nodes() {
+    public List<KafkaUri> nodes() {
         return nodes;
     }
 
-    public ClusterDescription withNodes(Set<KafkaUri> nodes) {
+    public ClusterDescription withNodes(List<KafkaUri> nodes) {
         this.nodes = nodes;
         return this;
     }
 
     public ClusterDescription addNode(KafkaUri node) {
         if(nodes == null) {
-            nodes = new TreeSet<>();
+            nodes = new ArrayList<>();
         }
         nodes.add(node);
         return this;

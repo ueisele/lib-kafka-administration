@@ -5,7 +5,7 @@ import java.util.Optional;
 
 import static java.util.Optional.ofNullable;
 
-public class Scheme implements Comparable<Scheme> {
+public class Scheme {
 
     private final String name;
 
@@ -43,14 +43,4 @@ public class Scheme implements Comparable<Scheme> {
         return Objects.hash(name);
     }
 
-    @Override
-    public int compareTo(Scheme other) {
-        if(other == null || other.name == null) {
-            return -1;
-        }
-        if(name == null) {
-            return 1;
-        }
-        return name.compareTo(other.name);
-    }
 }
