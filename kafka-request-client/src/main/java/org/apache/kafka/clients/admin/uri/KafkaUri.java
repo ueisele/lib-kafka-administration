@@ -22,7 +22,7 @@ public class KafkaUri extends Uri {
     }
 
     private static URI validate(URI uri) {
-        if(!SCHEME.name().equals(uri.getScheme())) {
+        if(SCHEME.name().isPresent() && !SCHEME.name().get().equals(uri.getScheme())) {
             throw new UriSyntaxException(format("Not a valid Kafka uri. Requires scheme '%s', but was '%s'.", SCHEME.name(), uri.getScheme()));
         }
         if(uri.getHost() == null) {

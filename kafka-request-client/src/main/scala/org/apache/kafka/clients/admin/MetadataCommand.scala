@@ -1,11 +1,13 @@
 package org.apache.kafka.clients.admin
 
+import java.util.concurrent.TimeUnit.SECONDS
+import java.util.concurrent.{Future, TimeUnit}
 import java.util.stream.Collectors
 
 import joptsimple.OptionParser
 import org.apache.kafka.clients.CommonClientConfigs
 import org.apache.kafka.clients.admin.mapper.Mapper.mapperByFormat
-import org.apache.kafka.clients.admin.metadata.KafkaMetadataClient
+import org.apache.kafka.clients.admin.metadata.{KafkaMetadataClient, MetadataDescription, ZkMetadataClient}
 import org.apache.kafka.clients.admin.request.RequestClient
 import org.apache.kafka.clients.admin.request.RequestClient.NodeProvider
 import org.apache.kafka.clients.admin.utils.{CommandLineUtils, Logging}
@@ -23,15 +25,27 @@ object MetadataCommand extends Logging{
     if(args.length == 0)
       CommandLineUtils.printUsageAndDie(opts.parser, "Describe cluster metadata.")
 
-    opts.checkArgs()
-
     var exitCode = 0
-    val requestClient = RequestClient.create(adminClientConfigs(opts).asJava)
+
+    var kafkaRequestClient: RequestClient = null
+    var zkMetadataClient: ZkMetadataClient = null
+
     try {
-      val metadataClient = new KafkaMetadataClient(requestClient)
-      val nodeProviders = nodeProvidersByOpts(metadataClient, opts)
-      val responseFutures = metadataClient.describe(nodeProviders.asJava)
-      val allResponses = responseFutures.asScala.map(_.get()).sortBy(r => r.source().toString).map(_.toMap()).toList
+      var responseFutures: List[Future[MetadataDescription]] = List()
+
+      if(opts.options.has(opts.bootstrapServerOpt)) {
+        kafkaRequestClient = RequestClient.create(adminClientConfigs(opts).asJava)
+        val metadataClient = new KafkaMetadataClient(kafkaRequestClient)
+        val nodeProviders = nodeProvidersByOpts(metadataClient, opts)
+        responseFutures ++= metadataClient.describe(nodeProviders.asJava).asScala.toList
+      }
+
+      if(opts.options.has(opts.zookeeperServerOpt)) {
+        val zkMetadataClient = new ZkMetadataClient(opts.options.valueOf(opts.zookeeperServerOpt))
+        responseFutures ++= List(zkMetadataClient.describe())
+      }
+
+      val allResponses = responseFutures.map(_.get(1000, SECONDS)).sortBy(r => r.source().toString).map(_.toMap())
       val mapper = mapperByFormat(opts.options.valueOf(opts.formatOpt))
       println(mapper.map(allResponses.asJava))
     } catch {
@@ -40,7 +54,12 @@ object MetadataCommand extends Logging{
         error(Utils.stackTrace(e))
         exitCode = 1
     } finally {
-      requestClient.close()
+      if(kafkaRequestClient!=null) {
+        kafkaRequestClient.close()
+      }
+      if(zkMetadataClient!=null) {
+        zkMetadataClient.close()
+      }
       Exit.exit(exitCode)
     }
   }
@@ -69,7 +88,7 @@ object MetadataCommand extends Logging{
   class MetadataCommandOptions(args: Array[String]) {
     val parser = new OptionParser(false)
     val helpOpt = parser.accepts("help", "Print usage information.")
-    val bootstrapServerOpt = parser.accepts("bootstrap-server", "REQUIRED: The connection string for the kafka connection in the form host:port. " +
+    val bootstrapServerOpt = parser.accepts("bootstrap-server", "The connection string for the kafka connection in the form host:port. " +
       "Multiple hosts can be given to allow fail-over.")
       .withRequiredArg
       .describedAs("hosts")
@@ -81,6 +100,11 @@ object MetadataCommand extends Logging{
       .defaultsTo("any")
       .withValuesSeparatedBy(",")
       .ofType(classOf[String])
+    val zookeeperServerOpt = parser.accepts("zookeeper", "The connection string for the zookeeper connection in the form host:port. " +
+      "Multiple hosts can be given to allow fail-over.")
+      .withRequiredArg
+      .describedAs("hosts")
+      .ofType(classOf[String])
     val formatOpt = parser.accepts("format", "The output format. Supported values are 'json' or 'yaml'. Default value is 'json'.")
       .withRequiredArg()
       .defaultsTo("json")
@@ -88,9 +112,6 @@ object MetadataCommand extends Logging{
 
     val options = parser.parse(args : _*)
 
-    def checkArgs() {
-      CommandLineUtils.checkRequiredArgs(parser, options, bootstrapServerOpt)
-    }
   }
 
 }

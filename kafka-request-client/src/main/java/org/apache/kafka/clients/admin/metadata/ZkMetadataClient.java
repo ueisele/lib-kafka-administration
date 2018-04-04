@@ -16,8 +16,8 @@ import static java.util.concurrent.TimeUnit.MILLISECONDS;
 
 public class ZkMetadataClient implements AutoCloseable {
 
-    private static final Duration DEFAULT_SESSION_TIMEOUT = Duration.ofSeconds(20);
-    private static final Duration DEFAULT_CONNECTION_TIMEOUT = Duration.ofSeconds(20);
+    private static final Duration DEFAULT_SESSION_TIMEOUT = Duration.ofSeconds(60);
+    private static final Duration DEFAULT_CONNECTION_TIMEOUT = Duration.ofSeconds(60);
 
     private final ZkKafkaClient zkKafkaClient;
 
@@ -48,7 +48,7 @@ public class ZkMetadataClient implements AutoCloseable {
     }
 
     MetadataDescription describeMetadata() {
-        Uri source = ZookeeperUri.parse(ZookeeperUri.SCHEME.name() + "://" + zkKafkaClient.zkConnectionString());
+        Uri source = ZookeeperUri.parse("zk://" + zkKafkaClient.zkConnectionString());
         return metadataResponseMapper.apply(source, zkKafkaClient.metadataRequest());
     }
 

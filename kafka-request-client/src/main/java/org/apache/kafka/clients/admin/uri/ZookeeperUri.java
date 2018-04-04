@@ -18,13 +18,13 @@ public class ZookeeperUri extends Uri {
     }
 
     private static URI validate(URI uri) {
-        if(!SCHEME.name().equals(uri.getScheme())) {
+        if(SCHEME.name().isPresent() && !SCHEME.name().get().equals(uri.getScheme())) {
             throw new UriSyntaxException(format("Not a valid Zookeeper uri. Requires scheme '%s', but was '%s'.", SCHEME.name(), uri.getScheme()));
         }
         if(uri.getHost() == null) {
             throw new UriSyntaxException("Not a valid Zookeeper uri. Requires a host name.");
         }
-        if(uri.getPath() != null && !uri.getPath().startsWith("/")) {
+        if(uri.getPath() != null && !uri.getPath().isEmpty()  && !uri.getPath().startsWith("/")) {
             throw new UriSyntaxException(format("Not a valid Zookeeper uri. Requires a absolute root path, but was '%s'.", uri.getPath()));
         }
         return uri;
