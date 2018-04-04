@@ -1,31 +1,32 @@
 package org.apache.kafka.clients.admin.metadata;
 
-import org.apache.commons.lang3.tuple.Pair;
 import org.apache.kafka.clients.admin.request.MetadataRequestDefinition;
 import org.apache.kafka.clients.admin.request.RequestClient;
 import org.apache.kafka.clients.admin.request.RequestClient.NodeProvider;
 import org.apache.kafka.clients.admin.request.ResponseResult;
+import org.apache.kafka.clients.admin.uri.KafkaUri;
+import org.apache.kafka.clients.admin.uri.Uri;
 import org.apache.kafka.common.Node;
 import org.apache.kafka.common.requests.MetadataResponse;
 
 import java.util.List;
 import java.util.concurrent.Future;
-import java.util.function.Function;
+import java.util.function.BiFunction;
 
 import static java.util.Arrays.stream;
 import static java.util.stream.Collectors.toList;
 
-public class MetadataClient {
+public class KafkaMetadataClient {
 
     private final RequestClient requestClient;
 
-    private final Function<Pair<Node, MetadataResponse>, MetadataDescription> metadataResponseMapper;
+    private final BiFunction<Uri, MetadataResponse, MetadataDescription> metadataResponseMapper;
 
-    public MetadataClient(RequestClient requestClient) {
+    public KafkaMetadataClient(RequestClient requestClient) {
         this(requestClient, new MetadataResponseToMetadataDescriptionMapper());
     }
 
-    public MetadataClient(RequestClient requestClient, Function<Pair<Node, MetadataResponse>, MetadataDescription> metadataResponseMapper) {
+    public KafkaMetadataClient(RequestClient requestClient, BiFunction<Uri, MetadataResponse, MetadataDescription> metadataResponseMapper) {
         this.requestClient = requestClient;
         this.metadataResponseMapper = metadataResponseMapper;
     }
@@ -40,7 +41,11 @@ public class MetadataClient {
         ResponseResult<MetadataResponse> responseResult = requestClient.request(
                 new MetadataRequestDefinition().withAllTopics().withAllowAutoTopicCreation(false),
                 nodeProvider);
-        return responseResult.nodeAndResponse().thenApply(metadataResponseMapper::apply);
+        return responseResult.nodeAndResponse().thenApply(pair -> metadataResponseMapper.apply(toKafkaUri(pair.left), pair.right));
+    }
+
+    private KafkaUri toKafkaUri(Node node) {
+        return new KafkaUri(node.host(), node.port(), node.id(), node.rack());
     }
 
     public List<NodeProvider> atAllNodes() {

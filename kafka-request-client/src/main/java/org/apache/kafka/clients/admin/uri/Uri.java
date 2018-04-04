@@ -31,7 +31,7 @@ public class Uri {
         this.uri = toURI(scheme, authority, path, query);
     }
 
-    public Uri parse(String uriString) throws UriSyntaxException {
+    public static Uri parse(String uriString) throws UriSyntaxException {
         try {
             return new Uri(new URI(uriString));
         } catch (URISyntaxException e) {

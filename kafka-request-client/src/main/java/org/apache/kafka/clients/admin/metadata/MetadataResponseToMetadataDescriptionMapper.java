@@ -1,7 +1,7 @@
 package org.apache.kafka.clients.admin.metadata;
 
-import org.apache.commons.lang3.tuple.Pair;
 import org.apache.kafka.clients.admin.uri.KafkaUri;
+import org.apache.kafka.clients.admin.uri.Uri;
 import org.apache.kafka.common.Node;
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.requests.MetadataResponse;
@@ -9,30 +9,22 @@ import org.apache.kafka.common.requests.MetadataResponse;
 import java.util.Collection;
 import java.util.Comparator;
 import java.util.List;
-import java.util.function.Function;
+import java.util.function.BiFunction;
 
 import static java.util.stream.Collectors.toList;
 
-public class MetadataResponseToMetadataDescriptionMapper implements Function<Pair<Node, MetadataResponse>, MetadataDescription> {
+public class MetadataResponseToMetadataDescriptionMapper implements BiFunction<Uri, MetadataResponse, MetadataDescription> {
 
     @Override
-    public MetadataDescription apply(Pair<Node, MetadataResponse> nodeAndMetadataResponse) {
-        return toMetadataDescription(nodeAndMetadataResponse);
+    public MetadataDescription apply(Uri source, MetadataResponse metadataResponse) {
+        return toMetadataDescription(source, metadataResponse);
     }
 
-    public MetadataDescription toMetadataDescription(Pair<Node, MetadataResponse> nodeAndMetadataResponse) {
-        return toMetadataDescription(nodeAndMetadataResponse.getLeft(), nodeAndMetadataResponse.getRight());
-    }
-
-    public MetadataDescription toMetadataDescription(Node node, MetadataResponse metadataResponse) {
+    public MetadataDescription toMetadataDescription(Uri source, MetadataResponse metadataResponse) {
         return new MetadataDescription()
-                .withSource(toKafkaUri(node))
+                .withSource(source)
                 .withCluster(toClusterDescription(metadataResponse))
                 .withTopics(toTopicDescriptions(metadataResponse.topicMetadata()));
-    }
-
-    private KafkaUri toKafkaUri(Node node) {
-        return new KafkaUri(node.host(), node.port(), node.id(), node.rack());
     }
 
     private List<KafkaUri> toKafkaUris(Collection<Node> nodes) {
@@ -40,6 +32,10 @@ public class MetadataResponseToMetadataDescriptionMapper implements Function<Pai
                 .map(this::toKafkaUri)
                 .sorted(Comparator.comparing(KafkaUri::toString))
                 .collect(toList());
+    }
+
+    private KafkaUri toKafkaUri(Node node) {
+        return new KafkaUri(node.host(), node.port(), node.id(), node.rack());
     }
 
     private ClusterDescription toClusterDescription(MetadataResponse metadataResponse) {

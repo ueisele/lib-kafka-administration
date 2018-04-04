@@ -6,6 +6,7 @@ dependencies {
     compile libs.jacksonDatabind
     compile libs.jacksonDataformatYaml
     compile libs.joptSimple
+    compile libs.kafka
     compile libs.kafkaClients
     compile libs.log4j
     compile libs.scala

@@ -8,7 +8,7 @@ import static java.util.Objects.requireNonNull;
 
 public class ZookeeperUri extends Uri {
 
-    private static final Scheme SCHEME = new Scheme("zk");
+    public static final Scheme SCHEME = new Scheme("zk");
 
     private static final String DEFAULT_ROOT_PATH = "/";
     private static final int DEFAULT_PORT = 2181;
@@ -38,7 +38,7 @@ public class ZookeeperUri extends Uri {
         super(SCHEME, new Authority(requireNonNull(host), port), new Path(rootPath), new Query());
     }
 
-    public ZookeeperUri parse(String uriString) throws UriSyntaxException {
+    public static ZookeeperUri parse(String uriString) throws UriSyntaxException {
         try {
             return new ZookeeperUri(new URI(uriString));
         } catch (URISyntaxException e) {

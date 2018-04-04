@@ -1,13 +1,11 @@
 package org.apache.kafka.clients.admin
 
-import java.util.concurrent.Future
-import java.util.concurrent.TimeUnit.SECONDS
 import java.util.stream.Collectors
 
 import joptsimple.OptionParser
 import org.apache.kafka.clients.CommonClientConfigs
 import org.apache.kafka.clients.admin.mapper.Mapper.mapperByFormat
-import org.apache.kafka.clients.admin.metadata.MetadataClient
+import org.apache.kafka.clients.admin.metadata.KafkaMetadataClient
 import org.apache.kafka.clients.admin.request.RequestClient
 import org.apache.kafka.clients.admin.request.RequestClient.NodeProvider
 import org.apache.kafka.clients.admin.utils.{CommandLineUtils, Logging}
@@ -30,7 +28,7 @@ object MetadataCommand extends Logging{
     var exitCode = 0
     val requestClient = RequestClient.create(adminClientConfigs(opts).asJava)
     try {
-      val metadataClient = new MetadataClient(requestClient)
+      val metadataClient = new KafkaMetadataClient(requestClient)
       val nodeProviders = nodeProvidersByOpts(metadataClient, opts)
       val responseFutures = metadataClient.describe(nodeProviders.asJava)
       val allResponses = responseFutures.asScala.map(_.get()).sortBy(r => r.source().toString).map(_.toMap()).toList
@@ -51,13 +49,13 @@ object MetadataCommand extends Logging{
     Map(CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG -> opts.options.valueOf(opts.bootstrapServerOpt))
   }
 
-  def nodeProvidersByOpts(client: MetadataClient, opts: MetadataCommandOptions): List[NodeProvider] = {
+  def nodeProvidersByOpts(client: KafkaMetadataClient, opts: MetadataCommandOptions): List[NodeProvider] = {
     opts.options.valuesOf(opts.atKafkaNodesOpt).stream()
       .flatMap(value => nodeProviderByType(client, value).asJava.stream())
       .collect(Collectors.toList()).asScala.toList
   }
 
-  def nodeProviderByType(client: MetadataClient, value: String): List[NodeProvider] = {
+  def nodeProviderByType(client: KafkaMetadataClient, value: String): List[NodeProvider] = {
     val node = """node#(\d+)""".r
     value match {
       case "any" => List(client.atAnyNode())

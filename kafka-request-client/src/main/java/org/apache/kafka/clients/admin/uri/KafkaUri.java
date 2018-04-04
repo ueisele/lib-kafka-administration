@@ -54,7 +54,7 @@ public class KafkaUri extends Uri {
         return query;
     }
 
-    public KafkaUri parse(String uriString) throws UriSyntaxException {
+    public static KafkaUri parse(String uriString) throws UriSyntaxException {
         try {
             return new KafkaUri(new URI(uriString));
         } catch (URISyntaxException e) {
