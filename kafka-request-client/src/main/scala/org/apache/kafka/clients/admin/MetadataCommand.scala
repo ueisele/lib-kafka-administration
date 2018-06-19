@@ -69,9 +69,9 @@ object MetadataCommand extends Logging{
   }
 
   def nodeProvidersByOpts(client: KafkaMetadataClient, opts: MetadataCommandOptions): List[NodeProvider] = {
-    opts.options.valuesOf(opts.atKafkaNodesOpt).stream()
-      .flatMap(value => nodeProviderByType(client, value).asJava.stream())
-      .collect(Collectors.toList()).asScala.toList
+    opts.options.valuesOf(opts.atKafkaNodesOpt).asScala
+        .flatMap(value => nodeProviderByType(client, value))
+        .toList
   }
 
   def nodeProviderByType(client: KafkaMetadataClient, value: String): List[NodeProvider] = {
