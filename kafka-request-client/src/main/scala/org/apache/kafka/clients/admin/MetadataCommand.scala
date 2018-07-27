@@ -1,8 +1,7 @@
 package org.apache.kafka.clients.admin
 
+import java.util.concurrent.Future
 import java.util.concurrent.TimeUnit.SECONDS
-import java.util.concurrent.{Future, TimeUnit}
-import java.util.stream.Collectors
 
 import joptsimple.OptionParser
 import org.apache.kafka.clients.CommonClientConfigs
