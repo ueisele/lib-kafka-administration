@@ -45,7 +45,7 @@ should_include_file() {
   fi
 }
 
-base_dir=$(dirname $0)/..
+base_dir=$(dirname $(readlink -f $0))/..
 
 if [ -z "$SCALA_VERSION" ]; then
   SCALA_VERSION=2.12.5

@@ -1,0 +1,20 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kafka-request-client
+  labels:
+    app: kafka-request-client
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kafka-request-client
+  template:
+    metadata:
+      labels:
+        app: kafka-request-client
+    spec:
+      serviceAccount: riplf-test-labor01
+      containers:
+        - name: kafka-request-client
+          image: dockerregistry.reisendeninfo.aws.db.de:5000/sherlock/kafka-request-client:4.1.1
