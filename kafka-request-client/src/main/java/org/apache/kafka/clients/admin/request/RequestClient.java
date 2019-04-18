@@ -21,10 +21,11 @@ import org.apache.commons.lang3.tuple.ImmutablePair;
 import org.apache.commons.lang3.tuple.Pair;
 import org.apache.kafka.clients.*;
 import org.apache.kafka.clients.admin.AdminClientConfig;
+import org.apache.kafka.clients.admin.KafkaAdminClient;
+import org.apache.kafka.clients.admin.internals.AdminMetadataManager;
 import org.apache.kafka.common.Cluster;
 import org.apache.kafka.common.KafkaException;
 import org.apache.kafka.common.Node;
-import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.errors.*;
 import org.apache.kafka.common.internals.KafkaFutureImpl;
 import org.apache.kafka.common.metrics.*;
@@ -32,6 +33,8 @@ import org.apache.kafka.common.network.ChannelBuilder;
 import org.apache.kafka.common.network.Selector;
 import org.apache.kafka.common.requests.AbstractRequest;
 import org.apache.kafka.common.requests.AbstractResponse;
+import org.apache.kafka.common.requests.MetadataRequest;
+import org.apache.kafka.common.requests.MetadataResponse;
 import org.apache.kafka.common.utils.AppInfoParser;
 import org.apache.kafka.common.utils.KafkaThread;
 import org.apache.kafka.common.utils.LogContext;
@@ -39,31 +42,37 @@ import org.apache.kafka.common.utils.Time;
 import org.slf4j.Logger;
 
 import java.net.InetSocketAddress;
+import java.time.Duration;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Predicate;
 
-import static java.util.Collections.emptySet;
 import static java.util.stream.Collectors.toList;
 import static org.apache.kafka.common.utils.Utils.closeQuietly;
 
 public class RequestClient implements AutoCloseable {
 
     /**
-     * The next integer to use to name a RequestClient which the user hasn't specified an explicit name for.
+     * The next integer to use to name a KafkaAdminClient which the user hasn't specified an explicit name for.
      */
-    private static final AtomicInteger REQUEST_CLIENT_ID_SEQUENCE = new AtomicInteger(1);
+    private static final AtomicInteger ADMIN_CLIENT_ID_SEQUENCE = new AtomicInteger(1);
 
     /**
      * The prefix to use for the JMX metrics for this class
      */
-    private static final String JMX_PREFIX = "kafka.request.client";
+    private static final String JMX_PREFIX = "kafka.admin.client";
 
     /**
      * An invalid shutdown time which indicates that a shutdown has not yet been performed.
      */
     private static final long INVALID_SHUTDOWN_TIME = -1;
+
+    /**
+     * Thread name prefix for admin client network thread
+     */
+    static final String NETWORK_THREAD_PREFIX = "kafka-admin-client-thread";
 
     private final Logger log;
 
@@ -73,7 +82,7 @@ public class RequestClient implements AutoCloseable {
     private final int defaultTimeoutMs;
 
     /**
-     * The name of this RequestClient instance.
+     * The name of this AdminClient instance.
      */
     private final String clientId;
 
@@ -83,12 +92,12 @@ public class RequestClient implements AutoCloseable {
     private final Time time;
 
     /**
-     * The cluster metadata used by the KafkaClient.
+     * The cluster metadata manager used by the KafkaClient.
      */
-    private final Metadata metadata;
+    private final AdminMetadataManager metadataManager;
 
     /**
-     * The metrics for this RequestClient.
+     * The metrics for this KafkaAdminClient.
      */
     private final Metrics metrics;
 
@@ -98,12 +107,12 @@ public class RequestClient implements AutoCloseable {
     private final KafkaClient client;
 
     /**
-     * The runnable used in the service thread for this request client.
+     * The runnable used in the service thread for this admin client.
      */
     private final RequestClientRunnable runnable;
 
     /**
-     * The network service thread for this request client.
+     * The network service thread for this admin client.
      */
     private final Thread thread;
 
@@ -119,6 +128,8 @@ public class RequestClient implements AutoCloseable {
     private final TimeoutProcessorFactory timeoutProcessorFactory;
 
     private final int maxRetries;
+
+    private final long retryBackoffMs;
 
     /**
      * Get or create a list value from a map.
@@ -165,7 +176,7 @@ public class RequestClient implements AutoCloseable {
         String clientId = config.getString(AdminClientConfig.CLIENT_ID_CONFIG);
         if (!clientId.isEmpty())
             return clientId;
-        return "adminclient-" + REQUEST_CLIENT_ID_SEQUENCE.getAndIncrement();
+        return "adminclient-" + ADMIN_CLIENT_ID_SEQUENCE.getAndIncrement();
     }
 
     /**
@@ -217,81 +228,91 @@ public class RequestClient implements AutoCloseable {
         try {
             // Since we only request node information, it's safe to pass true for allowAutoTopicCreation (and it
             // simplifies communication with older brokers)
-            Metadata metadata = new Metadata(config.getLong(AdminClientConfig.RETRY_BACKOFF_MS_CONFIG),
-                    config.getLong(AdminClientConfig.METADATA_MAX_AGE_CONFIG), true);
+            AdminMetadataManager metadataManager = new AdminMetadataManager(logContext,
+                    config.getLong(AdminClientConfig.RETRY_BACKOFF_MS_CONFIG),
+                    config.getLong(AdminClientConfig.METADATA_MAX_AGE_CONFIG));
+            List<InetSocketAddress> addresses = ClientUtils.parseAndValidateAddresses(
+                    config.getList(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG),
+                    config.getString(AdminClientConfig.CLIENT_DNS_LOOKUP_CONFIG));
+            metadataManager.update(Cluster.bootstrap(addresses), time.milliseconds());
             List<MetricsReporter> reporters = config.getConfiguredInstances(AdminClientConfig.METRIC_REPORTER_CLASSES_CONFIG,
-                MetricsReporter.class);
+                    MetricsReporter.class,
+                    Collections.singletonMap(AdminClientConfig.CLIENT_ID_CONFIG, clientId));
             Map<String, String> metricTags = Collections.singletonMap("client-id", clientId);
             MetricConfig metricConfig = new MetricConfig().samples(config.getInt(AdminClientConfig.METRICS_NUM_SAMPLES_CONFIG))
-                .timeWindow(config.getLong(AdminClientConfig.METRICS_SAMPLE_WINDOW_MS_CONFIG), TimeUnit.MILLISECONDS)
-                .recordLevel(Sensor.RecordingLevel.forName(config.getString(AdminClientConfig.METRICS_RECORDING_LEVEL_CONFIG)))
-                .tags(metricTags);
+                    .timeWindow(config.getLong(AdminClientConfig.METRICS_SAMPLE_WINDOW_MS_CONFIG), TimeUnit.MILLISECONDS)
+                    .recordLevel(Sensor.RecordingLevel.forName(config.getString(AdminClientConfig.METRICS_RECORDING_LEVEL_CONFIG)))
+                    .tags(metricTags);
             reporters.add(new JmxReporter(JMX_PREFIX));
             metrics = new Metrics(metricConfig, reporters, time);
-            String metricGrpPrefix = "request-client";
-            channelBuilder = ClientUtils.createChannelBuilder(config);
+            String metricGrpPrefix = "admin-client";
+            channelBuilder = ClientUtils.createChannelBuilder(config, time);
             selector = new Selector(config.getLong(AdminClientConfig.CONNECTIONS_MAX_IDLE_MS_CONFIG),
                     metrics, time, metricGrpPrefix, channelBuilder, logContext);
             networkClient = new NetworkClient(
-                selector,
-                metadata,
-                clientId,
-                1,
-                config.getLong(AdminClientConfig.RECONNECT_BACKOFF_MS_CONFIG),
-                config.getLong(AdminClientConfig.RECONNECT_BACKOFF_MAX_MS_CONFIG),
-                config.getInt(AdminClientConfig.SEND_BUFFER_CONFIG),
-                config.getInt(AdminClientConfig.RECEIVE_BUFFER_CONFIG),
-                (int) TimeUnit.HOURS.toMillis(1),
-                time,
-                true,
-                apiVersions,
-                logContext);
-            return new RequestClient(config, clientId, time, metadata, metrics, networkClient,
-                timeoutProcessorFactory, logContext);
+                    selector,
+                    metadataManager.updater(),
+                    clientId,
+                    1,
+                    config.getLong(AdminClientConfig.RECONNECT_BACKOFF_MS_CONFIG),
+                    config.getLong(AdminClientConfig.RECONNECT_BACKOFF_MAX_MS_CONFIG),
+                    config.getInt(AdminClientConfig.SEND_BUFFER_CONFIG),
+                    config.getInt(AdminClientConfig.RECEIVE_BUFFER_CONFIG),
+                    (int) TimeUnit.HOURS.toMillis(1),
+                    ClientDnsLookup.forConfig(config.getString(AdminClientConfig.CLIENT_DNS_LOOKUP_CONFIG)),
+                    time,
+                    true,
+                    apiVersions,
+                    logContext);
+            return new RequestClient(config, clientId, time, metadataManager, metrics, networkClient,
+                    timeoutProcessorFactory, logContext);
         } catch (Throwable exc) {
             closeQuietly(metrics, "Metrics");
             closeQuietly(networkClient, "NetworkClient");
             closeQuietly(selector, "Selector");
             closeQuietly(channelBuilder, "ChannelBuilder");
-            throw new KafkaException("Failed create new RequestClient", exc);
+            throw new KafkaException("Failed to create new KafkaAdminClient", exc);
         }
     }
 
-    private static LogContext createLogContext(String clientId) {
-        return new LogContext("[RequestClient clientId=" + clientId + "] ");
+    static LogContext createLogContext(String clientId) {
+        return new LogContext("[AdminClient clientId=" + clientId + "] ");
     }
 
-    private RequestClient(AdminClientConfig config, String clientId, Time time, Metadata metadata,
-                          Metrics metrics, KafkaClient client, TimeoutProcessorFactory timeoutProcessorFactory,
-                          LogContext logContext) {
+    private RequestClient(AdminClientConfig config,
+                             String clientId,
+                             Time time,
+                             AdminMetadataManager metadataManager,
+                             Metrics metrics,
+                             KafkaClient client,
+                             TimeoutProcessorFactory timeoutProcessorFactory,
+                             LogContext logContext) {
         this.defaultTimeoutMs = config.getInt(AdminClientConfig.REQUEST_TIMEOUT_MS_CONFIG);
         this.clientId = clientId;
-        this.log = logContext.logger(RequestClient.class);
+        this.log = logContext.logger(KafkaAdminClient.class);
         this.time = time;
-        this.metadata = metadata;
-        List<InetSocketAddress> addresses = ClientUtils.parseAndValidateAddresses(
-            config.getList(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG));
-        this.metadata.update(Cluster.bootstrap(addresses), emptySet(), time.milliseconds());
+        this.metadataManager = metadataManager;
         this.metrics = metrics;
         this.client = client;
         this.runnable = new RequestClientRunnable();
-        String threadName = "kafka-request-client-thread | " + clientId;
+        String threadName = NETWORK_THREAD_PREFIX + " | " + clientId;
         this.thread = new KafkaThread(threadName, runnable, true);
         this.timeoutProcessorFactory = (timeoutProcessorFactory == null) ?
-            new TimeoutProcessorFactory() : timeoutProcessorFactory;
+                new TimeoutProcessorFactory() : timeoutProcessorFactory;
         this.maxRetries = config.getInt(AdminClientConfig.RETRIES_CONFIG);
+        this.retryBackoffMs = config.getLong(AdminClientConfig.RETRY_BACKOFF_MS_CONFIG);
         config.logUnused();
         AppInfoParser.registerAppInfo(JMX_PREFIX, clientId, metrics);
-        log.debug("Kafka request client initialized");
+        log.debug("Kafka admin client initialized");
         thread.start();
     }
 
-    public NodeProvider toNode(String host, int port) {
-        return new HostPortNodeProvider(host, port);
+    Time time() {
+        return time;
     }
 
     public NodeProvider toNode(int nodeId) {
-        return new ConstantIdNodeProvider(nodeId);
+        return new ConstantNodeIdProvider(nodeId);
     }
 
     public NodeProvider toControllerNode() {
@@ -302,22 +323,20 @@ public class RequestClient implements AutoCloseable {
         return new LeastLoadedNodeProvider();
     }
 
-    public NodeProvider toLeaderForTopicPartitionNode(TopicPartition topicPartition) {
-        return new LeaderForTopicPartitionNodeProvider(topicPartition);
-    }
-
-    public NodeProvider toLeaderForTopicPartitionNode(String topic, int partition) {
-        return new LeaderForTopicPartitionNodeProvider(topic, partition);
-    }
-
     public List<NodeProvider> toAllNodes() {
+        if(!metadataManager.isReady()) {
+            metadataManager.requestUpdate();
+        }
         try {
-            metadata.awaitUpdate(metadata.requestUpdate(), 5000);
+            while(!metadataManager.isReady()) {
+                Thread.sleep(5000);
+            }
         } catch (InterruptedException e) {
             //Do nothing
         }
-        return metadata.fetch().nodes().stream()
-                .map(ConstantNodeProvider::new)
+        return metadataManager.updater().fetchNodes().stream()
+                .map(Node::id)
+                .map(ConstantNodeIdProvider::new)
                 .collect(toList());
     }
 
@@ -356,16 +375,16 @@ public class RequestClient implements AutoCloseable {
 
     /**
      * Close the RequestClient and release all associated resources.
-     *
-     * See {@link RequestClient#close(long, TimeUnit)}
      */
     @Override
     public void close() {
-        close(Long.MAX_VALUE, TimeUnit.MILLISECONDS);
+        close(Duration.ofMillis(Long.MAX_VALUE));
     }
 
-    public void close(long duration, TimeUnit unit) {
-        long waitTimeMs = unit.toMillis(duration);
+    public void close(Duration timeout) {
+        long waitTimeMs = timeout.toMillis();
+        if (waitTimeMs < 0)
+            throw new IllegalArgumentException("The timeout cannot be negative.");
         waitTimeMs = Math.min(TimeUnit.DAYS.toMillis(365), waitTimeMs); // Limit the timeout to a year.
         long now = time.milliseconds();
         long newHardShutdownTimeMs = now + waitTimeMs;
@@ -397,7 +416,7 @@ public class RequestClient implements AutoCloseable {
 
             AppInfoParser.unregisterAppInfo(JMX_PREFIX, clientId, metrics);
 
-            log.debug("Kafka request client closed.");
+            log.debug("Kafka admin client closed.");
         } catch (InterruptedException e) {
             log.debug("Interrupted while joining I/O thread", e);
             Thread.currentThread().interrupt();
@@ -411,46 +430,33 @@ public class RequestClient implements AutoCloseable {
         Node provide();
     }
 
-    private class ConstantNodeProvider implements NodeProvider {
-        private final Node node;
-
-        public ConstantNodeProvider(Node node) {
-            this.node = node;
-        }
-
+    private class MetadataUpdateNodeIdProvider implements NodeProvider {
         @Override
         public Node provide() {
-            return node;
+            return client.leastLoadedNode(time.milliseconds());
         }
     }
 
-    private class HostPortNodeProvider implements NodeProvider {
-        private final String host;
-        private final int port;
 
-        HostPortNodeProvider(String host, int port) {
-            this.host = host;
-            this.port = port;
-        }
-
-        @Override
-        public Node provide() {
-            return metadata.fetch().nodes().stream()
-                    .filter(node -> Objects.equals(node.host(), host) && Objects.equals(node.port(), port))
-                    .findAny().orElse(null);
-        }
-    }
-
-    private class ConstantIdNodeProvider implements NodeProvider {
+    private class ConstantNodeIdProvider implements NodeProvider {
         private final int nodeId;
 
-        ConstantIdNodeProvider(int nodeId) {
+        ConstantNodeIdProvider(int nodeId) {
             this.nodeId = nodeId;
         }
 
         @Override
         public Node provide() {
-            return metadata.fetch().nodeById(nodeId);
+            if (metadataManager.isReady() &&
+                    (metadataManager.nodeById(nodeId) != null)) {
+                return metadataManager.nodeById(nodeId);
+            }
+            // If we can't find the node with the given constant ID, we schedule a
+            // metadata update and hope it appears.  This behavior is useful for avoiding
+            // flaky behavior in tests when the cluster is starting up and not all nodes
+            // have appeared.
+            metadataManager.requestUpdate();
+            return null;
         }
     }
 
@@ -460,7 +466,12 @@ public class RequestClient implements AutoCloseable {
     private class ControllerNodeProvider implements NodeProvider {
         @Override
         public Node provide() {
-            return metadata.fetch().controller();
+            if (metadataManager.isReady() &&
+                    (metadataManager.controller() != null)) {
+                return metadataManager.controller();
+            }
+            metadataManager.requestUpdate();
+            return null;
         }
     }
 
@@ -470,24 +481,13 @@ public class RequestClient implements AutoCloseable {
     private class LeastLoadedNodeProvider implements NodeProvider {
         @Override
         public Node provide() {
-            return client.leastLoadedNode(time.milliseconds());
-        }
-    }
-
-    private class LeaderForTopicPartitionNodeProvider implements NodeProvider {
-        private final TopicPartition topicPartition;
-
-        public LeaderForTopicPartitionNodeProvider(String topic, int partition) {
-            this(new TopicPartition(topic, partition));
-        }
-
-        public LeaderForTopicPartitionNodeProvider(TopicPartition topicPartition) {
-            this.topicPartition = topicPartition;
-        }
-
-        @Override
-        public Node provide() {
-            return metadata.fetch().leaderFor(topicPartition);
+            if (metadataManager.isReady()) {
+                // This may return null if all nodes are busy.
+                // In that case, we will postpone node assignment.
+                return client.leastLoadedNode(time.milliseconds());
+            }
+            metadataManager.requestUpdate();
+            return null;
         }
     }
 
@@ -508,8 +508,8 @@ public class RequestClient implements AutoCloseable {
         }
 
         @Override
-        void handleResponse(AbstractResponse abstractResponse, Node node) {
-            responseFuture.complete(ImmutablePair.of(node, requestDefinition.response(abstractResponse)));
+        void handleResponse(AbstractResponse abstractResponse) {
+            responseFuture.complete(ImmutablePair.of(curNode(), requestDefinition.response(abstractResponse)));
         }
 
         @Override
@@ -519,16 +519,28 @@ public class RequestClient implements AutoCloseable {
     }
 
     abstract class Call {
+        private final boolean internal;
         private final String callName;
         private final long deadlineMs;
         private final NodeProvider nodeProvider;
         private int tries = 0;
         private boolean aborted = false;
+        private Node curNode = null;
+        private long nextAllowedTryMs = 0;
 
-        Call(String callName, long deadlineMs, NodeProvider nodeProvider) {
+        Call(boolean internal, String callName, long deadlineMs, NodeProvider nodeProvider) {
+            this.internal = internal;
             this.callName = callName;
             this.deadlineMs = deadlineMs;
             this.nodeProvider = nodeProvider;
+        }
+
+        Call(String callName, long deadlineMs, NodeProvider nodeProvider) {
+            this(false, callName, deadlineMs, nodeProvider);
+        }
+
+        protected Node curNode() {
+            return curNode;
         }
 
         /**
@@ -549,7 +561,7 @@ public class RequestClient implements AutoCloseable {
                 tries++;
                 if (log.isDebugEnabled()) {
                     log.debug("{} aborted at {} after {} attempt(s)", this, now, tries,
-                        new Exception(prettyPrintException(throwable)));
+                            new Exception(prettyPrintException(throwable)));
                 }
                 handleFailure(new TimeoutException("Aborted due to timeout."));
                 return;
@@ -558,17 +570,19 @@ public class RequestClient implements AutoCloseable {
             // protocol downgrade will not count against the total number of retries we get for
             // this RPC. That is why 'tries' is not incremented.
             if ((throwable instanceof UnsupportedVersionException) &&
-                     handleUnsupportedVersionException((UnsupportedVersionException) throwable)) {
-                log.trace("{} attempting protocol downgrade.", this);
+                    handleUnsupportedVersionException((UnsupportedVersionException) throwable)) {
+                log.debug("{} attempting protocol downgrade and then retry.", this);
                 runnable.enqueue(this, now);
                 return;
             }
             tries++;
+            nextAllowedTryMs = now + retryBackoffMs;
+
             // If the call has timed out, fail.
             if (calcTimeoutMsRemainingAsInt(now, deadlineMs) < 0) {
                 if (log.isDebugEnabled()) {
                     log.debug("{} timed out at {} after {} attempt(s)", this, now, tries,
-                        new Exception(prettyPrintException(throwable)));
+                            new Exception(prettyPrintException(throwable)));
                 }
                 handleFailure(throwable);
                 return;
@@ -577,7 +591,7 @@ public class RequestClient implements AutoCloseable {
             if (!(throwable instanceof RetriableException)) {
                 if (log.isDebugEnabled()) {
                     log.debug("{} failed with non-retriable exception after {} attempt(s)", this, tries,
-                        new Exception(prettyPrintException(throwable)));
+                            new Exception(prettyPrintException(throwable)));
                 }
                 handleFailure(throwable);
                 return;
@@ -586,14 +600,14 @@ public class RequestClient implements AutoCloseable {
             if (tries > maxRetries) {
                 if (log.isDebugEnabled()) {
                     log.debug("{} failed after {} attempt(s)", this, tries,
-                        new Exception(prettyPrintException(throwable)));
+                            new Exception(prettyPrintException(throwable)));
                 }
                 handleFailure(throwable);
                 return;
             }
             if (log.isDebugEnabled()) {
                 log.debug("{} failed: {}. Beginning retry #{}",
-                    this, prettyPrintException(throwable), tries);
+                        this, prettyPrintException(throwable), tries);
             }
             runnable.enqueue(this, now);
         }
@@ -611,10 +625,9 @@ public class RequestClient implements AutoCloseable {
          * Process the call response.
          *
          * @param abstractResponse  The AbstractResponse.
-         * @param node              The node
          *
          */
-        abstract void handleResponse(AbstractResponse abstractResponse, Node node);
+        abstract void handleResponse(AbstractResponse abstractResponse);
 
         /**
          * Handle a failure. This will only be called if the failure exception was not
@@ -638,6 +651,10 @@ public class RequestClient implements AutoCloseable {
         @Override
         public String toString() {
             return "Call(callName=" + callName + ", deadlineMs=" + deadlineMs + ")";
+        }
+
+        public boolean isInternal() {
+            return internal;
         }
     }
 
@@ -744,125 +761,134 @@ public class RequestClient implements AutoCloseable {
 
     private final class RequestClientRunnable implements Runnable {
         /**
+         * Calls which have not yet been assigned to a node.
+         * Only accessed from this thread.
+         */
+        private final ArrayList<Call> pendingCalls = new ArrayList<>();
+
+        /**
+         * Maps nodes to calls that we want to send.
+         * Only accessed from this thread.
+         */
+        private final Map<Node, List<Call>> callsToSend = new HashMap<>();
+
+        /**
+         * Maps node ID strings to calls that have been sent.
+         * Only accessed from this thread.
+         */
+        private final Map<String, List<Call>> callsInFlight = new HashMap<>();
+
+        /**
+         * Maps correlation IDs to calls that have been sent.
+         * Only accessed from this thread.
+         */
+        private final Map<Integer, Call> correlationIdToCalls = new HashMap<>();
+
+        /**
          * Pending calls. Protected by the object monitor.
          * This will be null only if the thread has shut down.
          */
         private List<Call> newCalls = new LinkedList<>();
 
         /**
-         * Check if the RequestClient metadata is ready.
-         * We need to know who the controller is, and have a non-empty view of the cluster.
-         *
-         * @param prevMetadataVersion       The previous metadata version which wasn't usable.
-         * @return                          null if the metadata is usable; the current metadata
-         *                                  version otherwise
-         */
-        private Integer checkMetadataReady(Integer prevMetadataVersion) {
-            if (prevMetadataVersion != null) {
-                if (prevMetadataVersion == metadata.version())
-                    return prevMetadataVersion;
-            }
-            Cluster cluster = metadata.fetch();
-            if (cluster.nodes().isEmpty()) {
-                log.trace("Metadata is not ready yet. No cluster nodes found.");
-                return metadata.requestUpdate();
-            }
-            if (cluster.controller() == null) {
-                log.trace("Metadata is not ready yet. No controller found.");
-                return metadata.requestUpdate();
-            }
-            if (prevMetadataVersion != null) {
-                log.trace("Metadata is now ready.");
-            }
-            return null;
-        }
-
-        /**
-         * Time out the elements in the newCalls list which are expired.
+         * Time out the elements in the pendingCalls list which are expired.
          *
          * @param processor     The timeout processor.
          */
-        private synchronized void timeoutNewCalls(TimeoutProcessor processor) {
-            int numTimedOut = processor.handleTimeouts(newCalls,
-                    "Timed out waiting for a node assignment.");
+        private void timeoutPendingCalls(TimeoutProcessor processor) {
+            int numTimedOut = processor.handleTimeouts(pendingCalls, "Timed out waiting for a node assignment.");
             if (numTimedOut > 0)
-                log.debug("Timed out {} new calls.", numTimedOut);
+                log.debug("Timed out {} pending calls.", numTimedOut);
         }
 
         /**
          * Time out calls which have been assigned to nodes.
          *
          * @param processor     The timeout processor.
-         * @param callsToSend   A map of nodes to the calls they need to handle.
          */
-        private void timeoutCallsToSend(TimeoutProcessor processor, Map<Node, List<Call>> callsToSend) {
+        private int timeoutCallsToSend(TimeoutProcessor processor) {
             int numTimedOut = 0;
             for (List<Call> callList : callsToSend.values()) {
                 numTimedOut += processor.handleTimeouts(callList,
-                    "Timed out waiting to send the call.");
+                        "Timed out waiting to send the call.");
             }
             if (numTimedOut > 0)
                 log.debug("Timed out {} call(s) with assigned nodes.", numTimedOut);
+            return numTimedOut;
         }
 
         /**
-         * Choose nodes for the calls in the callsToSend list.
+         * Drain all the calls from newCalls into pendingCalls.
          *
          * This function holds the lock for the minimum amount of time, to avoid blocking
          * users of AdminClient who will also take the lock to add new calls.
-         *
-         * @param now           The current time in milliseconds.
-         * @param callsToSend   A map of nodes to the calls they need to handle.
-         *
          */
-        private void chooseNodesForNewCalls(long now, Map<Node, List<Call>> callsToSend) {
-            List<Call> newCallsToAdd = null;
-            synchronized (this) {
-                if (newCalls.isEmpty()) {
-                    return;
-                }
-                newCallsToAdd = newCalls;
-                newCalls = new LinkedList<>();
-            }
-            for (Call call : newCallsToAdd) {
-                chooseNodeForNewCall(now, callsToSend, call);
+        private synchronized void drainNewCalls() {
+            if (!newCalls.isEmpty()) {
+                pendingCalls.addAll(newCalls);
+                newCalls.clear();
             }
         }
 
         /**
-         * Choose a node for a new call.
+         * Choose nodes for the calls in the pendingCalls list.
          *
          * @param now           The current time in milliseconds.
-         * @param callsToSend   A map of nodes to the calls they need to handle.
-         * @param call          The call.
+         * @return              The minimum time until a call is ready to be retried if any of the pending
+         *                      calls are backing off after a failure
          */
-        private void chooseNodeForNewCall(long now, Map<Node, List<Call>> callsToSend, Call call) {
-            Node node = call.nodeProvider.provide();
-            if (node == null) {
-                call.fail(now, new BrokerNotAvailableException(
-                    String.format("Error choosing node for %s: no node found.", call.callName)));
-                return;
+        private long maybeDrainPendingCalls(long now) {
+            long pollTimeout = Long.MAX_VALUE;
+            log.trace("Trying to choose nodes for {} at {}", pendingCalls, now);
+
+            Iterator<Call> pendingIter = pendingCalls.iterator();
+            while (pendingIter.hasNext()) {
+                Call call = pendingIter.next();
+
+                // If the call is being retried, await the proper backoff before finding the node
+                if (now < call.nextAllowedTryMs) {
+                    pollTimeout = Math.min(pollTimeout, call.nextAllowedTryMs - now);
+                } else if (maybeDrainPendingCall(call, now)) {
+                    pendingIter.remove();
+                }
             }
-            log.trace("Assigned {} to {}", call, node);
-            getOrCreateListValue(callsToSend, node).add(call);
+            return pollTimeout;
+        }
+
+        /**
+         * Check whether a pending call can be assigned a node. Return true if the pending call was either
+         * transferred to the callsToSend collection or if the call was failed. Return false if it
+         * should remain pending.
+         */
+        private boolean maybeDrainPendingCall(Call call, long now) {
+            try {
+                Node node = call.nodeProvider.provide();
+                if (node != null) {
+                    log.trace("Assigned {} to node {}", call, node);
+                    call.curNode = node;
+                    getOrCreateListValue(callsToSend, node).add(call);
+                    return true;
+                } else {
+                    log.trace("Unable to assign {} to a node.", call);
+                    return false;
+                }
+            } catch (Throwable t) {
+                // Handle authentication errors while choosing nodes.
+                log.debug("Unable to choose node for {}", call, t);
+                call.fail(now, t);
+                return true;
+            }
         }
 
         /**
          * Send the calls which are ready.
          *
          * @param now                   The current time in milliseconds.
-         * @param callsToSend           The calls to send, by node.
-         * @param correlationIdToCalls  A map of correlation IDs to calls.
-         * @param callsInFlight         A map of nodes to the calls they have in flight.
-         *
          * @return                      The minimum timeout we need for poll().
          */
-        private long sendEligibleCalls(long now, Map<Node, List<Call>> callsToSend,
-                                       Map<Integer, Pair<Node, Call>> correlationIdToCalls,
-                                       Map<String, List<Call>> callsInFlight) {
+        private long sendEligibleCalls(long now) {
             long pollTimeout = Long.MAX_VALUE;
-            for (Iterator<Map.Entry<Node, List<Call>>> iter = callsToSend.entrySet().iterator();
-                 iter.hasNext(); ) {
+            for (Iterator<Map.Entry<Node, List<Call>>> iter = callsToSend.entrySet().iterator(); iter.hasNext(); ) {
                 Map.Entry<Node, List<Call>> entry = iter.next();
                 List<Call> calls = entry.getValue();
                 if (calls.isEmpty()) {
@@ -871,26 +897,26 @@ public class RequestClient implements AutoCloseable {
                 }
                 Node node = entry.getKey();
                 if (!client.ready(node, now)) {
-                    long nodeTimeout = client.connectionDelay(node, now);
+                    long nodeTimeout = client.pollDelayMs(node, now);
                     pollTimeout = Math.min(pollTimeout, nodeTimeout);
                     log.trace("Client is not ready to send to {}. Must delay {} ms", node, nodeTimeout);
                     continue;
                 }
                 Call call = calls.remove(0);
                 int timeoutMs = calcTimeoutMsRemainingAsInt(now, call.deadlineMs);
-                AbstractRequest.Builder<?> requestBuilder = null;
+                AbstractRequest.Builder<?> requestBuilder;
                 try {
                     requestBuilder = call.createRequest(timeoutMs);
                 } catch (Throwable throwable) {
                     call.fail(now, new KafkaException(String.format(
-                        "Internal error sending %s to %s.", call.callName, node), throwable));
+                            "Internal error sending %s to %s.", call.callName, node)));
                     continue;
                 }
                 ClientRequest clientRequest = client.newClientRequest(node.idString(), requestBuilder, now, true);
                 log.trace("Sending {} to {}. correlationId={}", requestBuilder, node, clientRequest.correlationId());
                 client.send(clientRequest, now);
                 getOrCreateListValue(callsInFlight, node.idString()).add(call);
-                correlationIdToCalls.put(clientRequest.correlationId(), Pair.of(node, call));
+                correlationIdToCalls.put(clientRequest.correlationId(), call);
             }
             return pollTimeout;
         }
@@ -903,9 +929,8 @@ public class RequestClient implements AutoCloseable {
          * to time them out is to close the entire connection.
          *
          * @param processor         The timeout processor.
-         * @param callsInFlight     A map of nodes to the calls they have in flight.
          */
-        private void timeoutCallsInFlight(TimeoutProcessor processor, Map<String, List<Call>> callsInFlight) {
+        private void timeoutCallsInFlight(TimeoutProcessor processor) {
             int numTimedOut = 0;
             for (Map.Entry<String, List<Call>> entry : callsInFlight.entrySet()) {
                 List<Call> contexts = entry.getValue();
@@ -934,67 +959,32 @@ public class RequestClient implements AutoCloseable {
         }
 
         /**
-         * If an authentication exception is encountered with connection to any broker,
-         * fail all pending requests.
-         */
-        private void handleAuthenticationException(long now, Map<Node, List<Call>> callsToSend) {
-            AuthenticationException authenticationException = metadata.getAndClearAuthenticationException();
-            if (authenticationException == null) {
-                for (Node node : callsToSend.keySet()) {
-                    authenticationException = client.authenticationException(node);
-                    if (authenticationException != null)
-                        break;
-                }
-            }
-            if (authenticationException != null) {
-                synchronized (this) {
-                    failCalls(now, newCalls, authenticationException);
-                }
-                for (List<Call> calls : callsToSend.values()) {
-                    failCalls(now, calls, authenticationException);
-                }
-                callsToSend.clear();
-            }
-        }
-
-        private void failCalls(long now, List<Call> calls, AuthenticationException authenticationException) {
-            for (Call call : calls) {
-                call.fail(now, authenticationException);
-            }
-            calls.clear();
-        }
-
-        /**
          * Handle responses from the server.
          *
          * @param now                   The current time in milliseconds.
          * @param responses             The latest responses from KafkaClient.
-         * @param correlationIdToCall   A map of correlation IDs to calls.
-         * @param callsInFlight         A map of nodes to the calls they have in flight.
-        **/
-        private void handleResponses(long now, List<ClientResponse> responses, Map<String, List<Call>> callsInFlight,
-                                     Map<Integer, Pair<Node, Call>> correlationIdToCall) {
+         **/
+        private void handleResponses(long now, List<ClientResponse> responses) {
             for (ClientResponse response : responses) {
                 int correlationId = response.requestHeader().correlationId();
 
-                Pair<Node, Call> nodeAndcall = correlationIdToCall.get(correlationId);
-                if (nodeAndcall == null || nodeAndcall.getRight() == null) {
+                Call call = correlationIdToCalls.get(correlationId);
+                if (call == null) {
                     // If the server returns information about a correlation ID we didn't use yet,
                     // an internal server error has occurred. Close the connection and log an error message.
                     log.error("Internal server error on {}: server returned information about unknown " +
-                        "correlation ID {}, requestHeader = {}", response.destination(), correlationId,
-                        response.requestHeader());
+                                    "correlation ID {}, requestHeader = {}", response.destination(), correlationId,
+                            response.requestHeader());
                     client.disconnect(response.destination());
                     continue;
                 }
-                Node node = nodeAndcall.getLeft();
-                Call call = nodeAndcall.getRight();
+
                 // Stop tracking this call.
-                correlationIdToCall.remove(correlationId);
+                correlationIdToCalls.remove(correlationId);
                 List<Call> calls = callsInFlight.get(response.destination());
                 if ((calls == null) || (!calls.remove(call))) {
                     log.error("Internal server error on {}: ignoring call {} in correlationIdToCall " +
-                        "that did not exist in callsInFlight", response.destination(), call);
+                            "that did not exist in callsInFlight", response.destination(), call);
                     continue;
                 }
 
@@ -1003,12 +993,17 @@ public class RequestClient implements AutoCloseable {
                 if (response.versionMismatch() != null) {
                     call.fail(now, response.versionMismatch());
                 } else if (response.wasDisconnected()) {
-                    call.fail(now, new DisconnectException(String.format(
-                        "Cancelled %s request with correlation id %s due to node %s being disconnected",
-                        call.callName, correlationId, response.destination())));
+                    AuthenticationException authException = client.authenticationException(call.curNode());
+                    if (authException != null) {
+                        call.fail(now, authException);
+                    } else {
+                        call.fail(now, new DisconnectException(String.format(
+                                "Cancelled %s request with correlation id %s due to node %s being disconnected",
+                                call.callName, correlationId, response.destination())));
+                    }
                 } else {
                     try {
-                        call.handleResponse(response.responseBody(), node);
+                        call.handleResponse(response.responseBody());
                         if (log.isTraceEnabled())
                             log.trace("{} got response {}", call,
                                     response.responseBody().toString(response.requestHeader().apiVersion()));
@@ -1021,13 +1016,58 @@ public class RequestClient implements AutoCloseable {
             }
         }
 
-        private synchronized boolean threadShouldExit(long now, long curHardShutdownTimeMs,
-                                                      Map<Node, List<Call>> callsToSend, Map<Integer, Pair<Node, Call>> correlationIdToCalls) {
-            if (newCalls.isEmpty() && callsToSend.isEmpty() && correlationIdToCalls.isEmpty()) {
+        /**
+         * Unassign calls that have not yet been sent based on some predicate. For example, this
+         * is used to reassign the calls that have been assigned to a disconnected node.
+         *
+         * @param shouldUnassign Condition for reassignment. If the predicate is true, then the calls will
+         *                       be put back in the pendingCalls collection and they will be reassigned
+         */
+        private void unassignUnsentCalls(Predicate<Node> shouldUnassign) {
+            for (Iterator<Map.Entry<Node, List<Call>>> iter = callsToSend.entrySet().iterator(); iter.hasNext(); ) {
+                Map.Entry<Node, List<Call>> entry = iter.next();
+                Node node = entry.getKey();
+                List<Call> awaitingCalls = entry.getValue();
+
+                if (awaitingCalls.isEmpty()) {
+                    iter.remove();
+                } else if (shouldUnassign.test(node)) {
+                    pendingCalls.addAll(awaitingCalls);
+                    iter.remove();
+                }
+            }
+        }
+
+        private boolean hasActiveExternalCalls(Collection<Call> calls) {
+            for (Call call : calls) {
+                if (!call.isInternal()) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        /**
+         * Return true if there are currently active external calls.
+         */
+        private boolean hasActiveExternalCalls() {
+            if (hasActiveExternalCalls(pendingCalls)) {
+                return true;
+            }
+            for (List<Call> callList : callsToSend.values()) {
+                if (hasActiveExternalCalls(callList)) {
+                    return true;
+                }
+            }
+            return hasActiveExternalCalls(correlationIdToCalls.values());
+        }
+
+        private boolean threadShouldExit(long now, long curHardShutdownTimeMs) {
+            if (!hasActiveExternalCalls()) {
                 log.trace("All work has been completed, and the I/O thread is now exiting.");
                 return true;
             }
-            if (now > curHardShutdownTimeMs) {
+            if (now >= curHardShutdownTimeMs) {
                 log.info("Forcing a hard I/O thread shutdown. Requests in progress will be aborted.");
                 return true;
             }
@@ -1037,85 +1077,85 @@ public class RequestClient implements AutoCloseable {
 
         @Override
         public void run() {
-            /*
-             * Maps nodes to calls that we want to send.
-             */
-            Map<Node, List<Call>> callsToSend = new HashMap<>();
-
-            /*
-             * Maps node ID strings to calls that have been sent.
-             */
-            Map<String, List<Call>> callsInFlight = new HashMap<>();
-
-            /*
-             * Maps correlation IDs to calls that have been sent.
-             */
-            Map<Integer, Pair<Node, Call>> correlationIdToCalls = new HashMap<>();
-
-            /*
-             * The previous metadata version which wasn't usable, or null if there is none.
-             */
-            Integer prevMetadataVersion = null;
-
             long now = time.milliseconds();
             log.trace("Thread starting");
             while (true) {
+                // Copy newCalls into pendingCalls.
+                drainNewCalls();
+
                 // Check if the AdminClient thread should shut down.
                 long curHardShutdownTimeMs = hardShutdownTimeMs.get();
-                if ((curHardShutdownTimeMs != INVALID_SHUTDOWN_TIME) &&
-                        threadShouldExit(now, curHardShutdownTimeMs, callsToSend, correlationIdToCalls))
+                if ((curHardShutdownTimeMs != INVALID_SHUTDOWN_TIME) && threadShouldExit(now, curHardShutdownTimeMs))
                     break;
 
                 // Handle timeouts.
                 TimeoutProcessor timeoutProcessor = timeoutProcessorFactory.create(now);
-                timeoutNewCalls(timeoutProcessor);
-                timeoutCallsToSend(timeoutProcessor, callsToSend);
-                timeoutCallsInFlight(timeoutProcessor, callsInFlight);
+                timeoutPendingCalls(timeoutProcessor);
+                timeoutCallsToSend(timeoutProcessor);
+                timeoutCallsInFlight(timeoutProcessor);
 
                 long pollTimeout = Math.min(1200000, timeoutProcessor.nextTimeoutMs());
                 if (curHardShutdownTimeMs != INVALID_SHUTDOWN_TIME) {
                     pollTimeout = Math.min(pollTimeout, curHardShutdownTimeMs - now);
                 }
 
-                // Handle new calls and metadata update requests.
-                prevMetadataVersion = checkMetadataReady(prevMetadataVersion);
-                if (prevMetadataVersion == null) {
-                    chooseNodesForNewCalls(now, callsToSend);
-                    pollTimeout = Math.min(pollTimeout,
-                        sendEligibleCalls(now, callsToSend, correlationIdToCalls, callsInFlight));
+                // Choose nodes for our pending calls.
+                pollTimeout = Math.min(pollTimeout, maybeDrainPendingCalls(now));
+                long metadataFetchDelayMs = metadataManager.metadataFetchDelayMs(now);
+                if (metadataFetchDelayMs == 0) {
+                    metadataManager.transitionToUpdatePending(now);
+                    Call metadataCall = makeMetadataCall(now);
+                    // Create a new metadata fetch call and add it to the end of pendingCalls.
+                    // Assign a node for just the new call (we handled the other pending nodes above).
+
+                    if (!maybeDrainPendingCall(metadataCall, now))
+                        pendingCalls.add(metadataCall);
                 }
+                pollTimeout = Math.min(pollTimeout, sendEligibleCalls(now));
+
+                if (metadataFetchDelayMs > 0) {
+                    pollTimeout = Math.min(pollTimeout, metadataFetchDelayMs);
+                }
+
+                // Ensure that we use a small poll timeout if there are pending calls which need to be sent
+                if (!pendingCalls.isEmpty())
+                    pollTimeout = Math.min(pollTimeout, retryBackoffMs);
 
                 // Wait for network responses.
                 log.trace("Entering KafkaClient#poll(timeout={})", pollTimeout);
                 List<ClientResponse> responses = client.poll(pollTimeout, now);
                 log.trace("KafkaClient#poll retrieved {} response(s)", responses.size());
 
+                // unassign calls to disconnected nodes
+                unassignUnsentCalls(client::connectionFailed);
+
                 // Update the current time and handle the latest responses.
                 now = time.milliseconds();
-                handleAuthenticationException(now, callsToSend);
-                handleResponses(now, responses, callsInFlight, correlationIdToCalls);
+                handleResponses(now, responses);
             }
             int numTimedOut = 0;
             TimeoutProcessor timeoutProcessor = new TimeoutProcessor(Long.MAX_VALUE);
             synchronized (this) {
-                numTimedOut += timeoutProcessor.handleTimeouts(newCalls, "The RequestClient thread has exited.");
+                numTimedOut += timeoutProcessor.handleTimeouts(newCalls, "The AdminClient thread has exited.");
                 newCalls = null;
             }
-            numTimedOut += timeoutProcessor.handleTimeoutsForSent(correlationIdToCalls.values(),
-                    "The RequestClient thread has exited.");
+            numTimedOut += timeoutProcessor.handleTimeouts(pendingCalls, "The AdminClient thread has exited.");
+            numTimedOut += timeoutCallsToSend(timeoutProcessor);
+            numTimedOut += timeoutProcessor.handleTimeouts(correlationIdToCalls.values(),
+                    "The AdminClient thread has exited.");
             if (numTimedOut > 0) {
-                log.debug("Timed out {} remaining operations.", numTimedOut);
+                log.debug("Timed out {} remaining operation(s).", numTimedOut);
             }
             closeQuietly(client, "KafkaClient");
             closeQuietly(metrics, "Metrics");
-            log.debug("Exiting RequestClientRunnable thread.");
+            log.debug("Exiting AdminClientRunnable thread.");
         }
 
         /**
          * Queue a call for sending.
          *
-         * If the RequestClient thread has exited, this will fail. Otherwise, it will succeed (even
-         * if the RequestClient is shutting down). This function should called when retrying an
+         * If the AdminClient thread has exited, this will fail. Otherwise, it will succeed (even
+         * if the AdminClient is shutting down). This function should called when retrying an
          * existing call.
          *
          * @param call      The new call object.
@@ -1135,26 +1175,58 @@ public class RequestClient implements AutoCloseable {
             if (accepted) {
                 client.wakeup(); // wake the thread if it is in poll()
             } else {
-                log.debug("The RequestClient thread has exited. Timing out {}.", call);
-                call.fail(Long.MAX_VALUE, new TimeoutException("The RequestClient thread has exited."));
+                log.debug("The AdminClient thread has exited. Timing out {}.", call);
+                call.fail(Long.MAX_VALUE, new TimeoutException("The AdminClient thread has exited."));
             }
         }
 
         /**
          * Initiate a new call.
          *
-         * This will fail if the RequestClient is scheduled to shut down.
+         * This will fail if the AdminClient is scheduled to shut down.
          *
          * @param call      The new call object.
          * @param now       The current time in milliseconds.
          */
         void call(Call call, long now) {
             if (hardShutdownTimeMs.get() != INVALID_SHUTDOWN_TIME) {
-                log.debug("The RequestClient is not accepting new calls. Timing out {}.", call);
-                call.fail(Long.MAX_VALUE, new TimeoutException("The RequestClient thread is not accepting new calls."));
+                log.debug("The AdminClient is not accepting new calls. Timing out {}.", call);
+                call.fail(Long.MAX_VALUE, new TimeoutException("The AdminClient thread is not accepting new calls."));
             } else {
                 enqueue(call, now);
             }
+        }
+
+        /**
+         * Create a new metadata call.
+         */
+        private Call makeMetadataCall(long now) {
+            return new Call(true, "fetchMetadata", calcDeadlineMs(now, defaultTimeoutMs),
+                    new MetadataUpdateNodeIdProvider()) {
+                @Override
+                public AbstractRequest.Builder createRequest(int timeoutMs) {
+                    // Since this only requests node information, it's safe to pass true
+                    // for allowAutoTopicCreation (and it simplifies communication with
+                    // older brokers)
+                    return new MetadataRequest.Builder(Collections.emptyList(), true);
+                }
+
+                @Override
+                public void handleResponse(AbstractResponse abstractResponse) {
+                    MetadataResponse response = (MetadataResponse) abstractResponse;
+                    long now = time.milliseconds();
+                    metadataManager.update(response.cluster(), now);
+
+                    // Unassign all unsent requests after a metadata refresh to allow for a new
+                    // destination to be selected from the new metadata
+                    unassignUnsentCalls(node -> true);
+                }
+
+                @Override
+                public void handleFailure(Throwable e) {
+                    metadataManager.updateFailed(e);
+                }
+            };
         }
     }
 

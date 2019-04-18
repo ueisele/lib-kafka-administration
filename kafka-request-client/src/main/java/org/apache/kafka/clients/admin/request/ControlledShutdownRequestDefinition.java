@@ -1,16 +1,18 @@
 package org.apache.kafka.clients.admin.request;
 
 import org.apache.kafka.common.protocol.ApiKeys;
+import org.apache.kafka.common.protocol.types.Field;
+import org.apache.kafka.common.protocol.types.Struct;
+import org.apache.kafka.common.requests.AbstractControlRequest;
 import org.apache.kafka.common.requests.AbstractRequest;
 import org.apache.kafka.common.requests.ControlledShutdownRequest;
 import org.apache.kafka.common.requests.ControlledShutdownResponse;
 
+import static org.apache.kafka.common.requests.AbstractControlRequest.UNKNOWN_BROKER_EPOCH;
+
 public class ControlledShutdownRequestDefinition extends RequestDefinition<ControlledShutdownResponse, ControlledShutdownRequestDefinition> {
 
-    public static final short DEFAULT_DESIRED_VERSION = ApiKeys.CONTROLLED_SHUTDOWN.latestVersion();
-
     private final int shutdownBrokerId;
-    private short desiredVersion = DEFAULT_DESIRED_VERSION;
 
     public ControlledShutdownRequestDefinition(int shutdownBrokerId) {
         super(ApiKeys.CONTROLLED_SHUTDOWN.name, ControlledShutdownResponse.class);
@@ -19,19 +21,39 @@ public class ControlledShutdownRequestDefinition extends RequestDefinition<Contr
 
     @Override
     AbstractRequest.Builder<?> requestBuilder(long timeoutMs) {
-        return new ControlledShutdownRequest.Builder(shutdownBrokerId(), desiredVersion());
+        return new Builder(shutdownBrokerId(), UNKNOWN_BROKER_EPOCH);
     }
 
     public int shutdownBrokerId() {
         return shutdownBrokerId;
     }
 
-    public short desiredVersion() {
-        return desiredVersion;
-    }
+    public static class Builder extends AbstractRequest.Builder<ControlledShutdownRequest> {
+        private final int brokerId;
+        private final long brokerEpoch;
 
-    public ControlledShutdownRequestDefinition withDesiredVersion(short desiredVersion) {
-        this.desiredVersion = desiredVersion;
-        return this;
+        public Builder(int brokerId, long brokerEpoch) {
+            super(ApiKeys.CONTROLLED_SHUTDOWN);
+            this.brokerId = brokerId;
+            this.brokerEpoch = brokerEpoch;
+        }
+
+        @Override
+        public ControlledShutdownRequest build(short version) {
+            Struct struct = new Struct(ApiKeys.CONTROLLED_SHUTDOWN.requestSchema(ApiKeys.CONTROLLED_SHUTDOWN.latestVersion()));
+            struct.set("broker_id", brokerId);
+            struct.setIfExists("broker_epoch", brokerEpoch);
+            return new ControlledShutdownRequest(struct, version);
+        }
+
+        @Override
+        public String toString() {
+            StringBuilder bld = new StringBuilder();
+            bld.append("(type=ControlledShutdownRequest").
+                    append(", brokerId=").append(brokerId).
+                    append(", brokerEpoch=").append(brokerEpoch).
+                    append(")");
+            return bld.toString();
+        }
     }
 }

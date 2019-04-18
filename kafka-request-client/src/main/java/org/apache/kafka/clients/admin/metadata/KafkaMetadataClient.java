@@ -58,10 +58,6 @@ public class KafkaMetadataClient {
                 .collect(toList());
     }
 
-    public NodeProvider atNode(String host, int port) {
-        return requestClient.toNode(host, port);
-    }
-
     public NodeProvider atNode(int nodeId) {
         return requestClient.toNode(nodeId);
     }

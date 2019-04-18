@@ -1,6 +1,7 @@
 package org.apache.kafka.clients.admin.zk
 
 import java.time.Duration
+import java.util.Optional
 
 import kafka.admin.AdminUtils.debug
 import kafka.cluster.Broker
@@ -77,19 +78,20 @@ class ZkKafkaClient(val zkConnectionString: String,
       val partitionMetadata = sortedPartitions.map { partitionMap =>
         val partition = partitionMap._1
         val replicas = partitionMap._2
-        val inSyncReplicas = zkUtils.getInSyncReplicasForPartition(topic, partition)
-        val leader = zkUtils.getLeaderForPartition(topic, partition)
-        debug("replicas = " + replicas + ", in sync replicas = " + inSyncReplicas + ", leader = " + leader)
+        var leaderAndIsr = zkUtils.getLeaderAndIsrForPartition(topic, partition)
+        //val inSyncReplicas = zkUtils.getInSyncReplicasForPartition(topic, partition)
+        //val leader = zkUtils.getLeaderForPartition(topic, partition)
+        debug("replicas = " + replicas + ", " + leaderAndIsr)
 
         var leaderInfo: Node = Node.noNode()
         var replicaInfo: Seq[Node] = Nil
         var isrInfo: Seq[Node] = Nil
         var offlineReplicas: Seq[Node] = Nil
         try {
-          leaderInfo = leader match {
+          leaderInfo = leaderAndIsr match {
             case Some(l) =>
               try {
-                getBrokerInfo(List(l)).head.getNode(listenerName).getOrElse(Node.noNode())
+                getBrokerInfo(List(l.leader)).head.getNode(listenerName).getOrElse(Node.noNode())
               } catch {
                 case e: Throwable => throw new LeaderNotAvailableException("Leader not available for partition [%s,%d]".format(topic, partition), e)
               }
@@ -97,21 +99,21 @@ class ZkKafkaClient(val zkConnectionString: String,
           }
           try {
             replicaInfo = getBrokerInfo(replicas).map(_.getNode(listenerName).getOrElse(Node.noNode()))
-            isrInfo = getBrokerInfo(inSyncReplicas).map(_.getNode(listenerName).getOrElse(Node.noNode()))
+            isrInfo = getBrokerInfo(leaderAndIsr.get.isr).map(_.getNode(listenerName).getOrElse(Node.noNode()))
           } catch {
             case e: Throwable => throw new ReplicaNotAvailableException(e)
           }
           if (replicaInfo.size < replicas.size)
             throw new ReplicaNotAvailableException("Replica information not available for following brokers: " +
               replicas.filterNot(replicaInfo.map(_.id).contains(_)).mkString(","))
-          if (isrInfo.size < inSyncReplicas.size)
+          if (isrInfo.size < leaderAndIsr.get.isr.size)
             throw new ReplicaNotAvailableException("In Sync Replica information not available for following brokers: " +
-              inSyncReplicas.filterNot(isrInfo.map(_.id).contains(_)).mkString(","))
-          new MetadataResponse.PartitionMetadata(Errors.NONE, partition, leaderInfo, replicaInfo.asJava, isrInfo.asJava, offlineReplicas.asJava)
+              leaderAndIsr.get.isr.filterNot(isrInfo.map(_.id).contains(_)).mkString(","))
+          new MetadataResponse.PartitionMetadata(Errors.NONE, partition, leaderInfo, Optional.ofNullable(leaderAndIsr.get.leaderEpoch), replicaInfo.asJava, isrInfo.asJava, offlineReplicas.asJava)
         } catch {
           case e: Throwable =>
             debug("Error while fetching metadata for partition [%s,%d]".format(topic, partition), e)
-            new MetadataResponse.PartitionMetadata(Errors.forException(e), partition, leaderInfo, replicaInfo.asJava, isrInfo.asJava, offlineReplicas.asJava)
+            new MetadataResponse.PartitionMetadata(Errors.forException(e), partition, leaderInfo, Optional.ofNullable(leaderAndIsr.get.leaderEpoch), replicaInfo.asJava, isrInfo.asJava, offlineReplicas.asJava)
         }
       }
       new MetadataResponse.TopicMetadata(Errors.NONE, topic, Topic.isInternal(topic), partitionMetadata.asJava)

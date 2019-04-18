@@ -63,7 +63,7 @@ object ControlledShutdownCommand extends Logging{
       .withRequiredArg
       .describedAs("hosts")
       .ofType(classOf[String])
-    val brokerIds = parser.accepts("brokerIds", "The ids of the brokers to which to send a ControlledShutdown request.")
+    val brokerIds = parser.accepts("brokerIds", "The ids of the brokers for which a ControlledShutdown request should be sent.")
       .withRequiredArg
       .withValuesSeparatedBy(",")
       .ofType(classOf[Integer])
