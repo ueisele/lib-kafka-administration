@@ -1,9 +1,7 @@
 package org.apache.kafka.clients.admin.request;
 
 import org.apache.kafka.common.protocol.ApiKeys;
-import org.apache.kafka.common.protocol.types.Field;
 import org.apache.kafka.common.protocol.types.Struct;
-import org.apache.kafka.common.requests.AbstractControlRequest;
 import org.apache.kafka.common.requests.AbstractRequest;
 import org.apache.kafka.common.requests.ControlledShutdownRequest;
 import org.apache.kafka.common.requests.ControlledShutdownResponse;
@@ -21,6 +19,8 @@ public class ControlledShutdownRequestDefinition extends RequestDefinition<Contr
 
     @Override
     AbstractRequest.Builder<?> requestBuilder(long timeoutMs) {
+        //see KafkaZkClient.getAllBrokerAndEpochsInCluster();
+        //Broker Epoch is Czxid in ZK entry of broker
         return new Builder(shutdownBrokerId(), UNKNOWN_BROKER_EPOCH);
     }
 
