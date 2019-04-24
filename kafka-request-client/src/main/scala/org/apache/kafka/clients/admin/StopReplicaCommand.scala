@@ -1,5 +1,6 @@
 package org.apache.kafka.clients.admin
 
+import java.util
 import java.util.concurrent.Future
 import java.util.concurrent.TimeUnit.SECONDS
 
@@ -8,7 +9,9 @@ import org.apache.kafka.clients.CommonClientConfigs
 import org.apache.kafka.clients.admin.controlledshutdown.{ControlledShutdownStatus, KafkaControlledShutdownClient}
 import org.apache.kafka.clients.admin.mapper.Mapper.mapperByFormat
 import org.apache.kafka.clients.admin.request.RequestClient
+import org.apache.kafka.clients.admin.stopreplica.{KafkaStopReplicaClient, StopReplicaStatus}
 import org.apache.kafka.clients.admin.utils.{CommandLineUtils, Logging}
+import org.apache.kafka.common.TopicPartition
 import org.apache.kafka.common.utils.{Exit, Utils}
 
 import scala.collection.JavaConverters._
@@ -21,19 +24,19 @@ object StopReplicaCommand extends Logging{
     val opts = new StopReplicaCommandOptions(args)
 
     if(args.length == 0)
-      CommandLineUtils.printUsageAndDie(opts.parser, "Send ControlledShutdown Requests.")
+      CommandLineUtils.printUsageAndDie(opts.parser, "Send StopReplica Requests.")
 
     var exitCode = 0
 
     var kafkaRequestClient: RequestClient = null
 
     try {
-      var responseFutures: List[Future[ControlledShutdownStatus]] = List()
+      var responseFutures: List[Future[StopReplicaStatus]] = List()
 
       if(opts.options.has(opts.bootstrapServerOpt)) {
         kafkaRequestClient = RequestClient.create(adminClientConfigs(opts).asJava)
-        val controlledShutdownClient = new KafkaControlledShutdownClient(kafkaRequestClient)
-        responseFutures ++= controlledShutdownClient.shutdown(opts.options.valuesOf(opts.brokerIds)).asScala.toList
+        val stopReplicaClient = new KafkaStopReplicaClient(kafkaRequestClient)
+        responseFutures = stopReplicaClient.stopReplica(opts.options.valueOf(opts.brokerId).intValue(), opts.options.valuesOf(opts.topicPartitions).asScala.toSet.asJava) :: responseFutures
       }
 
       val allResponses = responseFutures.map(_.get(1000, SECONDS)).sortBy(r => r.source().toString).map(_.toMap())
@@ -67,10 +70,10 @@ object StopReplicaCommand extends Logging{
     val brokerId = parser.accepts("brokerId", "The id of the broker to  which a StopReplica request should be sent.")
       .withRequiredArg
       .ofType(classOf[Integer])
-    val topicPartitions = parser.accepts("topicPartitions", "List of Topic/Partitions")
+    val topicPartitions = parser.accepts("topicPartitions", "List of Topic/Partitions e.g. 'topic-a/0,topic-a/1,topic-b/0'")
       .withRequiredArg
       .withValuesSeparatedBy(",")
-      .ofType(classOf[String])
+      .withValuesConvertedBy(new TopicPartitionValueConverter)
     val formatOpt = parser.accepts("format", "The output format. Supported values are 'json' or 'yaml'. Default value is 'json'.")
       .withRequiredArg()
       .defaultsTo("json")
