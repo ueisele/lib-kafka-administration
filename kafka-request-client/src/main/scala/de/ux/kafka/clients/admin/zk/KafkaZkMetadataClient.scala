@@ -21,5 +21,12 @@ class KafkaZkMetadataClient(val zkConnectionString: String,
       .map(brokerAndEpoch => (brokerAndEpoch._1.id, brokerAndEpoch._2))
   }
 
+  /*
+  def getControllerIdAndEpoch: Option[(Int, Int)] = {
+    val controllerId = kafkaZkClient.getControllerId
+    val controllerEpoch = kafkaZkClient.getControllerEpoch
+  }
+  */
+
   override def close(): Unit = kafkaZkClient.close()
 }
