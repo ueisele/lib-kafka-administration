@@ -11,21 +11,38 @@ import static org.apache.kafka.common.requests.AbstractControlRequest.UNKNOWN_BR
 public class ControlledShutdownRequestDefinition extends RequestDefinition<ControlledShutdownResponse, ControlledShutdownRequestDefinition> {
 
     private final int shutdownBrokerId;
+    private final long shutdownBrokerEpoch;
 
     public ControlledShutdownRequestDefinition(int shutdownBrokerId) {
+        this(shutdownBrokerId, UNKNOWN_BROKER_EPOCH);
+    }
+
+    public ControlledShutdownRequestDefinition(int shutdownBrokerId, long shutdownBrokerEpoch) {
         super(ApiKeys.CONTROLLED_SHUTDOWN.name, ControlledShutdownResponse.class);
         this.shutdownBrokerId = shutdownBrokerId;
+        this.shutdownBrokerEpoch = shutdownBrokerEpoch;
     }
 
     @Override
     AbstractRequest.Builder<?> requestBuilder(long timeoutMs) {
-        //see KafkaZkClient.getAllBrokerAndEpochsInCluster();
-        //Broker Epoch is Czxid in ZK entry of broker
-        return new Builder(shutdownBrokerId(), UNKNOWN_BROKER_EPOCH);
+        return new Builder(shutdownBrokerId(), shutdownBrokerEpoch);
     }
 
     public int shutdownBrokerId() {
         return shutdownBrokerId;
+    }
+
+    public long shutdownBrokerEpoch() {
+        return shutdownBrokerEpoch;
+    }
+
+    @Override
+    public String toString() {
+        return "ControlledShutdownRequestDefinition{" +
+                super.toString() +
+                ", shutdownBrokerId=" + shutdownBrokerId +
+                ", shutdownBrokerEpoch=" + shutdownBrokerEpoch +
+                '}';
     }
 
     public static class Builder extends AbstractRequest.Builder<ControlledShutdownRequest> {

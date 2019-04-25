@@ -27,7 +27,7 @@ libs += [
         jacksonDataformatYaml: "com.fasterxml.jackson.dataformat:jackson-dataformat-yaml:$versions.jackson",
         joptSimple: "net.sf.jopt-simple:jopt-simple:$versions.jopt",
         junit: "junit:junit:$versions.junit",
-        kafka: "org.apache.kafka:kafka_2.11:$versions.kafka",
+        kafka: "org.apache.kafka:kafka_2.12:$versions.kafka",
         kafkaClients: "org.apache.kafka:kafka-clients:$versions.kafka",
         log4j: "log4j:log4j:$versions.log4j",
         scala: "org.scala-lang:scala-library:$versions.scala",

@@ -62,4 +62,12 @@ public abstract class RequestDefinition<R extends AbstractResponse, T extends Re
         return (T) this;
     }
 
+    @Override
+    public String toString() {
+        return "RequestDefinition{" +
+                "requestName='" + requestName + '\'' +
+                ", responseType=" + responseType +
+                ", timeoutMs=" + timeoutMs +
+                '}';
+    }
 }

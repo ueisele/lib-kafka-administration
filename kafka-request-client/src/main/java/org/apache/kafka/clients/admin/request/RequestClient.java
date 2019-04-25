@@ -435,6 +435,11 @@ public class RequestClient implements AutoCloseable {
         public Node provide() {
             return client.leastLoadedNode(time.milliseconds());
         }
+
+        @Override
+        public String toString() {
+            return "Least Loaded Node";
+        }
     }
 
 
@@ -458,6 +463,11 @@ public class RequestClient implements AutoCloseable {
             metadataManager.requestUpdate();
             return null;
         }
+
+        @Override
+        public String toString() {
+            return "Node " + nodeId;
+        }
     }
 
     /**
@@ -472,6 +482,11 @@ public class RequestClient implements AutoCloseable {
             }
             metadataManager.requestUpdate();
             return null;
+        }
+
+        @Override
+        public String toString() {
+            return "Controller Node";
         }
     }
 
@@ -488,6 +503,11 @@ public class RequestClient implements AutoCloseable {
             }
             metadataManager.requestUpdate();
             return null;
+        }
+
+        @Override
+        public String toString() {
+            return "Least Loaded Node";
         }
     }
 

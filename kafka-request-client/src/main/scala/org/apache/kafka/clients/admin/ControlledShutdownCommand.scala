@@ -7,7 +7,7 @@ import joptsimple.OptionParser
 import org.apache.kafka.clients.CommonClientConfigs
 import org.apache.kafka.clients.admin.controlledshutdown.{ControlledShutdownStatus, KafkaControlledShutdownClient}
 import org.apache.kafka.clients.admin.mapper.Mapper.mapperByFormat
-import org.apache.kafka.clients.admin.request.RequestClient
+import org.apache.kafka.clients.admin.request.{RequestClient, ZkRequestClient}
 import org.apache.kafka.clients.admin.utils.{CommandLineUtils, Logging}
 import org.apache.kafka.common.utils.{Exit, Utils}
 
@@ -26,13 +26,15 @@ object ControlledShutdownCommand extends Logging{
     var exitCode = 0
 
     var kafkaRequestClient: RequestClient = null
+    var zkRequestClient: ZkRequestClient = null
 
     try {
       var responseFutures: List[Future[ControlledShutdownStatus]] = List()
 
-      if(opts.options.has(opts.bootstrapServerOpt)) {
+      if(opts.options.has(opts.bootstrapServerOpt) && opts.options.has(opts.zookeeperServerOpt)) {
         kafkaRequestClient = RequestClient.create(adminClientConfigs(opts).asJava)
-        val controlledShutdownClient = new KafkaControlledShutdownClient(kafkaRequestClient)
+        zkRequestClient = new ZkRequestClient(opts.options.valueOf(opts.zookeeperServerOpt))
+        val controlledShutdownClient = new KafkaControlledShutdownClient(kafkaRequestClient, zkRequestClient)
         responseFutures ++= controlledShutdownClient.shutdown(opts.options.valuesOf(opts.brokerIds)).asScala.toList
       }
 
@@ -48,6 +50,9 @@ object ControlledShutdownCommand extends Logging{
       if(kafkaRequestClient!=null) {
         kafkaRequestClient.close()
       }
+      if(zkRequestClient!=null) {
+        zkRequestClient.close()
+      }
       Exit.exit(exitCode)
     }
   }
@@ -61,7 +66,12 @@ object ControlledShutdownCommand extends Logging{
     val bootstrapServerOpt = parser.accepts("bootstrap-server", "The connection string for the kafka connection in the form host:port. " +
       "Multiple hosts can be given to allow fail-over.")
       .withRequiredArg
-      .describedAs("hosts")
+      .describedAs("Kafka hosts")
+      .ofType(classOf[String])
+    val zookeeperServerOpt = parser.accepts("zookeeper", "The connection string for the zookeeper connection in the form host:port. " +
+      "Multiple hosts can be given to allow fail-over.")
+      .withRequiredArg
+      .describedAs("Zookeeper hosts")
       .ofType(classOf[String])
     val brokerIds = parser.accepts("brokerIds", "The ids of the brokers for which a ControlledShutdown request should be sent.")
       .withRequiredArg

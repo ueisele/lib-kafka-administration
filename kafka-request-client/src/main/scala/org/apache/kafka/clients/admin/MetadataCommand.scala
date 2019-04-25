@@ -90,7 +90,7 @@ object MetadataCommand extends Logging{
     val bootstrapServerOpt = parser.accepts("bootstrap-server", "The connection string for the kafka connection in the form host:port. " +
       "Multiple hosts can be given to allow fail-over.")
       .withRequiredArg
-      .describedAs("hosts")
+      .describedAs("Kafka hosts")
       .ofType(classOf[String])
     val atKafkaNodesOpt = parser.accepts("at-kafka", "The nodes from which the metadata should be queried. " +
       "Allowed values are 'any', 'controller', 'all' and 'node#[id]', for e.g. 'node#1,node#2'. Default value is 'any'.")
@@ -102,7 +102,7 @@ object MetadataCommand extends Logging{
     val zookeeperServerOpt = parser.accepts("zookeeper", "The connection string for the zookeeper connection in the form host:port. " +
       "Multiple hosts can be given to allow fail-over.")
       .withRequiredArg
-      .describedAs("hosts")
+      .describedAs("Zookeeper hosts")
       .ofType(classOf[String])
     val formatOpt = parser.accepts("format", "The output format. Supported values are 'json' or 'yaml'. Default value is 'json'.")
       .withRequiredArg()
