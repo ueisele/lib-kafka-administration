@@ -36,7 +36,7 @@ class ZkKafkaClient(val zkConnectionString: String,
     } else {
       metadata = topicMetadata(securityProtocol)
     }
-    new MetadataResponse(liveBrokers(securityProtocol).asScala.toList.asJava, clusterId(), zkUtils.getController(), metadata.asScala.toList.asJava)
+    MetadataResponse.prepareResponse(liveBrokers(securityProtocol).asScala.toList.asJava, clusterId(), zkUtils.getController(), metadata.asScala.toList.asJava)
   }
 
   def clusterId(): String = zkUtils.getClusterId.orNull

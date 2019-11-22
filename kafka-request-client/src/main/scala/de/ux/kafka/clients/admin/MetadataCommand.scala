@@ -1,5 +1,6 @@
 package de.ux.kafka.clients.admin
 
+import java.util.Properties
 import java.util.concurrent.Future
 import java.util.concurrent.TimeUnit.SECONDS
 
@@ -13,7 +14,6 @@ import org.apache.kafka.clients.CommonClientConfigs
 import org.apache.kafka.common.utils.{Exit, Utils}
 
 import scala.collection.JavaConverters._
-import scala.collection.Map
 
 object MetadataCommand extends Logging {
 
@@ -33,7 +33,7 @@ object MetadataCommand extends Logging {
       var responseFutures: List[Future[MetadataDescription]] = List()
 
       if(opts.options.has(opts.bootstrapServerOpt)) {
-        kafkaRequestClient = RequestClient.create(adminClientConfigs(opts).asJava)
+        kafkaRequestClient = RequestClient.create(adminClientConfigs(opts))
         val metadataClient = new KafkaMetadataClient(kafkaRequestClient)
         val nodeProviders = nodeProvidersByOpts(metadataClient, opts)
         responseFutures ++= metadataClient.describe(nodeProviders.asJava).asScala.toList
@@ -63,8 +63,13 @@ object MetadataCommand extends Logging {
     }
   }
 
-  def adminClientConfigs(opts: MetadataCommandOptions): Map[String, _] = {
-    Map(CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG -> opts.options.valueOf(opts.bootstrapServerOpt))
+  def adminClientConfigs(opts: MetadataCommandOptions): Properties = {
+    val props = if (opts.options.has(opts.commandConfigOpt))
+      Utils.loadProps(opts.options.valueOf(opts.commandConfigOpt))
+    else
+      new Properties()
+    props.put(CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG, opts.options.valueOf(opts.bootstrapServerOpt))
+    props
   }
 
   def nodeProvidersByOpts(client: KafkaMetadataClient, opts: MetadataCommandOptions): List[NodeProvider] = {
@@ -107,6 +112,10 @@ object MetadataCommand extends Logging {
     val formatOpt = parser.accepts("format", "The output format. Supported values are 'json' or 'yaml'. Default value is 'json'.")
       .withRequiredArg()
       .defaultsTo("json")
+      .ofType(classOf[String])
+    val commandConfigOpt = parser.accepts("command-config", "A property file containing configs to be passed to Admin Client.")
+      .withRequiredArg
+      .describedAs("command config property file")
       .ofType(classOf[String])
 
     val options = parser.parse(args : _*)

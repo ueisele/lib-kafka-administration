@@ -43,7 +43,7 @@ public class KafkaMetadataClient {
 
     public Future<MetadataDescription> describe(NodeProvider nodeProvider) {
         MetadataRequestDefinition requestDefinition = new MetadataRequestDefinition().withAllTopics().withAllowAutoTopicCreation(false);
-        LOG.info(String.format("Send request to %s: %s", nodeProvider, requestDefinition));
+        LOG.debug(String.format("Send request to %s: %s", nodeProvider, requestDefinition));
         ResponseResult<MetadataResponse> responseResult = requestClient.request(requestDefinition, nodeProvider);
         return responseResult.nodeAndResponse().thenApply(pair -> metadataResponseMapper.apply(toKafkaUri(pair.left), pair.right));
     }

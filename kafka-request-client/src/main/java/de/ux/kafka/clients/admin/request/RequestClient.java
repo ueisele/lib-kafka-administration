@@ -302,7 +302,7 @@ public class RequestClient implements AutoCloseable {
         this.maxRetries = config.getInt(AdminClientConfig.RETRIES_CONFIG);
         this.retryBackoffMs = config.getLong(AdminClientConfig.RETRY_BACKOFF_MS_CONFIG);
         config.logUnused();
-        AppInfoParser.registerAppInfo(JMX_PREFIX, clientId, metrics);
+        AppInfoParser.registerAppInfo(JMX_PREFIX, clientId, metrics, Time.SYSTEM.milliseconds());
         log.debug("Kafka admin client initialized");
         thread.start();
     }

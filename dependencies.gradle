@@ -1,5 +1,5 @@
 ext {
-    gradleVersion = "5.4"
+    gradleVersion = "6.0.1"
 
     versions = [:]
     libs = [:]
@@ -10,7 +10,7 @@ versions += [
         jackson: "2.9.8",
         jopt: "5.0.4",
         junit: "4.12",
-        kafka: "2.2.0-cp2",
+        kafka: "5.3.1-ccs",
         log4j: "1.2.17",
         scala: "2.12.8",
         scalaLogging: "3.9.0",
